@@ -2,6 +2,7 @@ import base64
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import json
 import os
+import re
 import time
 import requests
 import gradio as gr
@@ -56,6 +57,27 @@ STOP_FLAGS = {
     "iterative": False,
     "reverse": False,
 }
+
+TEMPLATE_TOKEN_PATTERN = re.compile(r"{{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*}}")
+
+
+def template_has_variables(template):
+    return bool(TEMPLATE_TOKEN_PATTERN.search(template or ""))
+
+
+def render_prompt_template(template, variables):
+    now = time.localtime()
+    values = {
+        "date": time.strftime("%Y-%m-%d", now),
+        "time": time.strftime("%H:%M:%S", now),
+        "datetime": time.strftime("%Y-%m-%d %H:%M:%S", now),
+    }
+    values.update({key: "" if value is None else str(value) for key, value in variables.items()})
+
+    def replace_token(match):
+        return values.get(match.group(1), match.group(0))
+
+    return TEMPLATE_TOKEN_PATTERN.sub(replace_token, template or "")
 
 ASPECT_RATIOS = {
     "1:1 正方形": {
@@ -1021,16 +1043,28 @@ def optimize_prompt_with_image(
     image_base64 = vision_image["base64"]
     image_mime_type = vision_image["mime_type"]
     optimizer_prompt = CONFIG.get("iteration_optimizer_prompt", ITERATION_OPTIMIZER_PROMPT)
-    context_parts = [
-        f"【多模态模型的系统提示词】\n{optimizer_prompt.strip()}",
-    ]
-    if creation_theme and creation_theme.strip():
-        context_parts.append(f"【创作主题】\n{creation_theme.strip()}")
-    if user_initial_direction and user_initial_direction.strip():
-        context_parts.append(f"【用户初始创作方向】\n{user_initial_direction.strip()}")
-    context_parts.append(f"【本轮图片使用的提示词】\n{prompt.strip()}")
-    context_parts.append("【本轮图片】\n见随附图片。")
-    request_text = "\n\n".join(context_parts)
+    template_variables = {
+        "current_prompt": prompt.strip(),
+        "prompt": prompt.strip(),
+        "creation_theme": (creation_theme or "").strip(),
+        "theme": (creation_theme or "").strip(),
+        "user_initial_direction": (user_initial_direction or "").strip(),
+        "initial_direction": (user_initial_direction or "").strip(),
+        "image": "见随附图片。",
+    }
+    if template_has_variables(optimizer_prompt):
+        request_text = render_prompt_template(optimizer_prompt, template_variables)
+    else:
+        context_parts = [
+            f"【多模态模型的系统提示词】\n{optimizer_prompt.strip()}",
+        ]
+        if creation_theme and creation_theme.strip():
+            context_parts.append(f"【创作主题】\n{creation_theme.strip()}")
+        if user_initial_direction and user_initial_direction.strip():
+            context_parts.append(f"【用户初始创作方向】\n{user_initial_direction.strip()}")
+        context_parts.append(f"【本轮图片使用的提示词】\n{prompt.strip()}")
+        context_parts.append("【本轮图片】\n见随附图片。")
+        request_text = "\n\n".join(context_parts)
     protocol, request_url = resolve_vision_protocol(base_url, model_id, protocol_choice)
 
     def request_vision():
@@ -1308,6 +1342,13 @@ def request_multimodal_text(
 def build_random_user_prompt(preference):
     preference = (preference or "").strip()
     user_prompt = CONFIG.get("random_user_prompt", RANDOM_USER_PROMPT)
+    variables = {
+        "preference": preference,
+        "creative_direction": preference,
+        "creation_direction": preference,
+    }
+    if template_has_variables(user_prompt):
+        return render_prompt_template(user_prompt, variables)
     if not preference:
         return user_prompt
     return f"{user_prompt}\n\n本次创作方向：{preference}"
@@ -2761,7 +2802,7 @@ def generate_iterative_image(
     )
     validation_error = validate_selected_image_config(image_model_provider, selected_model_id, selected_api_key)
     if validation_error:
-        yield "", [], validation_error
+        yield iteration_custom_prompt, "", [], validation_error
         return
 
     iteration_prompt_source = normalize_iteration_prompt_source(iteration_prompt_source)
@@ -2824,12 +2865,12 @@ def generate_iterative_image(
 
     if iteration_prompt_source == "自定义提示词":
         if not iteration_custom_prompt:
-            yield "", [], "请填写自定义初始提示词。"
+            yield iteration_custom_prompt, "", [], "请填写自定义初始提示词。"
             return
         current_prompt = iteration_custom_prompt
-        yield "", [], "已使用自定义初始提示词，开始第 1 轮出图..."
+        yield current_prompt, "", [], "已使用自定义初始提示词，开始第 1 轮出图..."
     else:
-        yield "", [], "正在生成初始随机提示词..."
+        yield iteration_custom_prompt, "", [], "正在生成初始随机提示词..."
         try:
             current_prompt = generate_random_prompt(
                 random_base_url,
@@ -2842,16 +2883,17 @@ def generate_iterative_image(
                 reasoning_effort=random_reasoning_effort,
             )
         except Exception as e:
-            yield "", [], f"初始随机提示词生成失败：{e}"
+            yield iteration_custom_prompt, "", [], f"初始随机提示词生成失败：{e}"
             return
 
     prompt_history.append(f"第 1 轮提示词：\n{current_prompt}")
     persist_config({"prompt": current_prompt})
-    yield "\n\n".join(prompt_history), [], "初始提示词已生成，开始第 1 轮出图..."
+    yield current_prompt, "\n\n".join(prompt_history), [], "初始提示词已生成，开始第 1 轮出图..."
 
     for round_index in range(1, iteration_count + 1):
         if should_stop("iterative"):
             yield (
+                current_prompt,
                 "\n\n".join(prompt_history),
                 build_gallery_items(saved_paths),
                 f"已停止：已生成 {len(saved_paths)}/{iteration_count} 张。",
@@ -2860,6 +2902,7 @@ def generate_iterative_image(
         round_started_at = time.perf_counter()
         try:
             yield (
+                current_prompt,
                 "\n\n".join(prompt_history),
                 build_gallery_items(saved_paths),
                 f"正在生成第 {round_index}/{iteration_count} 轮图片...",
@@ -2889,6 +2932,7 @@ def generate_iterative_image(
             image_records.append((round_index, image_path, elapsed))
             dimensions = get_image_dimensions(image_path) or request_size
             yield (
+                current_prompt,
                 "\n\n".join(prompt_history),
                 build_gallery_items(saved_paths),
                 f"第 {round_index}/{iteration_count} 轮图片已生成；分辨率 {dimensions}；本轮耗时 {format_duration(elapsed)}",
@@ -2899,6 +2943,7 @@ def generate_iterative_image(
 
             if should_stop("iterative"):
                 yield (
+                    current_prompt,
                     "\n\n".join(prompt_history),
                     build_gallery_items(saved_paths),
                     f"已停止：已生成 {len(saved_paths)}/{iteration_count} 张。",
@@ -2913,6 +2958,7 @@ def generate_iterative_image(
             preview_image = prepare_vision_image(image_path)
             upload_size_label = f"{format_bytes(preview_image['original_size'])} -> {format_bytes(preview_image['compressed_size'])}"
             yield (
+                current_prompt,
                 "\n\n".join(prompt_history),
                 build_gallery_items(saved_paths),
                 f"正在用多模态模型评估第 {round_index} 轮图片并优化提示词... 协议：{format_protocol_label(vision_protocol)}；地址：{display_endpoint(vision_url)}；上传图片 {upload_size_label}，{preview_image['dimensions']}",
@@ -2934,6 +2980,7 @@ def generate_iterative_image(
             prompt_history.append(f"第 {round_index + 1} 轮提示词：\n{current_prompt}")
             persist_config({"prompt": current_prompt})
             yield (
+                current_prompt,
                 "\n\n".join(prompt_history),
                 build_gallery_items(saved_paths),
                 f"第 {round_index + 1} 轮提示词已优化完成。",
@@ -2941,6 +2988,7 @@ def generate_iterative_image(
 
         except requests.exceptions.RequestException as e:
             yield (
+                current_prompt,
                 "\n\n".join(prompt_history),
                 build_gallery_items(saved_paths),
                 f"第 {round_index} 轮连接失败：{e}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}。",
@@ -2948,6 +2996,7 @@ def generate_iterative_image(
             return
         except Exception as e:
             yield (
+                current_prompt,
                 "\n\n".join(prompt_history),
                 build_gallery_items(saved_paths),
                 f"第 {round_index} 轮处理失败：{e}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}。",
@@ -2955,6 +3004,7 @@ def generate_iterative_image(
             return
 
     yield (
+        current_prompt,
         "\n\n".join(prompt_history),
         build_gallery_items(saved_paths),
         f"自我迭代完成：图片模型 {image_model_provider}；共生成 {len(saved_paths)} 张，迭代 {iteration_count} 轮；{format_generation_stats(image_records, iteration_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}",
@@ -3857,6 +3907,7 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                                 )
 
                     with gr.Column(scale=1, min_width=420):
+                        gr.HTML('<div class="mode-note">提示词模板支持变量：{{date}}、{{time}}、{{datetime}}、{{preference}}；视觉迭代还支持 {{current_prompt}}、{{creation_theme}}、{{user_initial_direction}}、{{image}}。</div>')
                         settings_random_system_prompt_input = gr.Textbox(
                             label="文本模型系统提示词（用于提示词生成）",
                             value=CONFIG["random_system_prompt"],
@@ -4066,7 +4117,7 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
             settings_iteration_protocol_input,
             settings_iteration_reasoning_effort_input,
         ],
-        outputs=[iterative_prompt_output, iterative_gallery_output, iterative_status_output],
+        outputs=[iterative_custom_prompt_input, iterative_prompt_output, iterative_gallery_output, iterative_status_output],
     )
     iterative_stop_btn.click(
         fn=lambda: request_stop("iterative"),

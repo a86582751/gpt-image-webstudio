@@ -262,7 +262,11 @@ Seedream 的尺寸规则和 GPT Image 独立处理：程序会根据模型 ID �
 app_config.json
 ```
 
-它用于保存接口地址、模型 ID、保存目录、重试设置和提示词模板。可以参考：
+`app_config.json` 用于保存页面状态、保存目录、重试设置和提示词模板。接口地址、模型 ID 和 API Key 会保存到同目录的 `.env`，避免混在运行配置里。
+
+提示词模板支持变量，例如 `{{date}}`、`{{time}}`、`{{datetime}}`、`{{preference}}`。自我迭代的视觉提示词还支持 `{{current_prompt}}`、`{{creation_theme}}`、`{{user_initial_direction}}`、`{{image}}`。
+
+可以参考：
 
 ```text
 app_config.example.json
