@@ -32,31 +32,31 @@
 
 输入固定提示词，选择数量、比例、分辨率和并发张数后批量生成。
 
-![手动模式](screenshot_manual.png)
+![手动模式](docs/images/manual.jpg)
 
 ### 随机模式
 
 由文本模型先生成一段随机提示词，再用这段提示词出图。
 
-![随机模式](screenshot_random.png)
+![随机模式](docs/images/random.jpg)
 
 ### 图生图
 
 上传 1-4 张参考图，输入编辑指令后生成新图片。多图时建议在提示词中写“第一张参考图 / 第二张参考图”，并补充图片特征，识别更稳定。
 
-![图生图](Image-to-image.png)
+![图生图](docs/images/image_to_image.jpg)
 
 ### 创意模式
 
 并发生成多段不同提示词，并把每段提示词各生成一张图片。
 
-![创意模式](screenshot_creative.png)
+![创意模式](docs/images/creative.jpg)
 
 ### 自我迭代模式
 
 生成图片后交给多模态模型评估，再返回优化提示词进入下一轮。
 
-![自我迭代模式](screenshot_iterative.png)
+![自我迭代模式](docs/images/iterative.jpg)
 
 ## 新手快速开始
 
