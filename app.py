@@ -326,19 +326,53 @@ def resolve_size(aspect_ratio, resolution):
     resolution_key = RESOLUTION_PRESETS.get(resolution, "高清")
     return ratio_sizes[resolution_key]
 
-def resolve_seedream_size(_aspect_ratio, resolution, model_id=""):
+SEEDREAM_SIZE_TABLES = {
+    "1K": {
+        "1:1 正方形": "1024x1024",
+        "4:3 横图": "1152x864",
+        "3:4 竖图": "864x1152",
+        "16:9 宽屏": "1312x736",
+        "9:16 竖屏": "736x1312",
+    },
+    "2K": {
+        "1:1 正方形": "2048x2048",
+        "4:3 横图": "2304x1728",
+        "3:4 竖图": "1728x2304",
+        "16:9 宽屏": "2848x1600",
+        "9:16 竖屏": "1600x2848",
+    },
+    "3K": {
+        "1:1 正方形": "3072x3072",
+        "4:3 横图": "3456x2592",
+        "3:4 竖图": "2592x3456",
+        "16:9 宽屏": "4096x2304",
+        "9:16 竖屏": "2304x4096",
+    },
+    "4K": {
+        "1:1 正方形": "4096x4096",
+        "4:3 横图": "4704x3520",
+        "3:4 竖图": "3520x4704",
+        "16:9 宽屏": "5504x3040",
+        "9:16 竖屏": "3040x5504",
+    },
+}
+
+
+def resolve_seedream_size(aspect_ratio, resolution, model_id=""):
     resolution_key = RESOLUTION_PRESETS.get(resolution, "高清")
     if seedream_model_family(model_id) == "lite":
-        return {
+        size_tier = {
             "标准": "2K",
             "高清": "3K",
             "超清": "4K",
         }.get(resolution_key, "3K")
-    return {
-        "标准": "1K",
-        "高清": "2K",
-        "超清": "2K",
-    }.get(resolution_key, "2K")
+    else:
+        size_tier = {
+            "标准": "1K",
+            "高清": "2K",
+            "超清": "2K",
+        }.get(resolution_key, "2K")
+    return SEEDREAM_SIZE_TABLES[size_tier].get(aspect_ratio, SEEDREAM_SIZE_TABLES[size_tier]["4:3 横图"])
 
 
 def resolve_image_request_size(provider, aspect_ratio, resolution, model_id=""):
