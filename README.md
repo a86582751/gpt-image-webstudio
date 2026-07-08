@@ -19,7 +19,7 @@
 - **自我迭代模式**：生成图片后调用多模态模型进行视觉评估，自动返回优化提示词进入下一轮。
 - **提示词反推**：上传图片或填写本地图片路径，由多模态模型反推出中文图像提示词。
 - **统一设置页**：集中管理图片生成接口、文本模型接口、多模态模型接口、重试策略、保存目录和提示词模板。
-- **Seedream 支持**：可在设置页单独填写豆包 Seedream 接口，并在出图模式里选择 GPT Image 或豆包 Seedream。
+- **Seedream 5.0 支持**：可在设置页单独填写豆包 Seedream 接口，并在出图模式里选择 GPT Image 或豆包 Seedream 5.0 Pro / Lite。
 - **生图并发间隔**：为文生图和图生图的并发请求增加启动间隔，降低中转站限流风险。
 - **协议适配**：支持 OpenAI Chat、OpenAI Responses、Gemini 原生协议、Claude Messages。
 - **思考档位**：文本模型和多模态模型可以分别设置思考强度，并自动映射到不同厂商的参数。
@@ -201,7 +201,16 @@ https://example.com/v1/images/edits
 
 在手动、图生图、随机、创意和自我迭代模式中，把“模型选择”切换为“豆包 Seedream”后生效。
 
-Seedream 的尺寸规则和 GPT Image 独立处理：程序会根据模型 ID 自动识别 Pro/Lite。`doubao-seedream-5-0-pro-260628` 使用 `1K/2K` 档位；`doubao-seedream-5-0-lite-260128` 和 `doubao-seedream-5-0-260128` 视为同一个 Lite 模型，使用 `2K/3K/4K` 档位；图片比例会写入提示词，让模型按所选比例生成。
+Seedream 的尺寸规则和 GPT Image 独立处理：程序会直接根据模型 ID 自动识别 Pro/Lite，不再单独维护“模型版本”字段。
+
+推荐模型 ID：
+
+```text
+doubao-seedream-5-0-pro-260628
+doubao-seedream-5-0-lite-260128
+```
+
+`doubao-seedream-5-0-260128` 会被视为 Lite 模型的同名兼容 ID。Pro 模型使用 `1K/2K` 档位；Lite 模型使用 `2K/3K/4K` 档位；图片比例会写入提示词，让模型按所选比例生成。
 
 ### 文本模型接口
 
@@ -286,6 +295,7 @@ prompt_templates_Default.py 公开默认提示词模板
 requirements.txt          Python 依赖
 DEPENDENCIES.md           依赖说明
 app_config.example.json   配置示例
+gpt_image_webstudio.ico   Windows 图标
 启动.bat                  Windows 启动脚本
 ```
 

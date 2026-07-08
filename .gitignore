@@ -1,9 +1,13 @@
 __pycache__/
 *.pyc
 app_config.json
+app_config.before-*.json
 prompt_templates.py
 AI_Cards/
 *.log
 .env
 .venv/
 venv/
+backup_*/
+screenshot/
+抽卡_backup_*.py

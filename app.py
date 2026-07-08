@@ -3811,7 +3811,7 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                         )
                         reverse_local_path_input = gr.Textbox(
                             label="本地图片路径",
-                            placeholder=r"例如：D:\Users\isund\Desktop\图片生成\AI_Cards\img_xxx.png",
+                            placeholder=r"例如：D:\Images\AI_Cards\img_xxx.png",
                             lines=1,
                         )
                         reverse_generate_btn = gr.Button("开始反推提示词", variant="primary", size="lg")
