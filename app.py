@@ -3,7 +3,9 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 import ast
 import json
 import os
+import queue
 import re
+import threading
 import time
 import requests
 import gradio as gr
@@ -148,6 +150,9 @@ DEFAULT_CONFIG = {
     "random_reasoning_effort": "最高",
     "random_preference": "",
     "iteration_count": 3,
+    "iteration_batch_count": 1,
+    "iteration_text_concurrency": 3,
+    "iteration_image_concurrency": 3,
     "iteration_prompt_source": "随机提示词",
     "iteration_custom_prompt": "",
     "iteration_base_url": ITERATION_BASE_URL,
@@ -282,6 +287,9 @@ def normalize_config(config):
         config["random_reasoning_effort"] = DEFAULT_CONFIG["random_reasoning_effort"]
     if config["iteration_reasoning_effort"] not in REASONING_EFFORT_PRESETS:
         config["iteration_reasoning_effort"] = DEFAULT_CONFIG["iteration_reasoning_effort"]
+    config["iteration_batch_count"] = min(10, max(1, int(config.get("iteration_batch_count") or DEFAULT_CONFIG["iteration_batch_count"])))
+    config["iteration_text_concurrency"] = min(10, max(1, int(config.get("iteration_text_concurrency") or DEFAULT_CONFIG["iteration_text_concurrency"])))
+    config["iteration_image_concurrency"] = min(10, max(1, int(config.get("iteration_image_concurrency") or DEFAULT_CONFIG["iteration_image_concurrency"])))
     return config
 
 
@@ -730,6 +738,18 @@ def get_save_dir(save_dir):
 
 def build_gallery_items(saved_paths):
     return [(path, f"第 {index} 张") for index, path in enumerate(saved_paths, start=1)]
+
+
+def build_iterative_gallery_items(records, final_only=False):
+    items = []
+    for record in sorted(records, key=lambda item: (item["task_index"], item["round_index"])):
+        if final_only and not record.get("is_final"):
+            continue
+        label = f"第 {record['task_index']} 组"
+        if not final_only:
+            label += f" / 第 {record['round_index']} 轮"
+        items.append((record["path"], label))
+    return items
 
 
 def get_image_dimensions(image_path):
@@ -2806,8 +2826,12 @@ def generate_iterative_image(
     iteration_prompt_source,
     iteration_custom_prompt,
     iteration_count,
+    iteration_batch_count,
+    iteration_text_concurrency,
+    iteration_image_concurrency,
     retry_count,
     retry_delay,
+    image_request_delay,
     image_model_provider,
     aspect_ratio,
     resolution,
@@ -2845,13 +2869,17 @@ def generate_iterative_image(
     )
     validation_error = validate_selected_image_config(image_model_provider, selected_model_id, selected_api_key)
     if validation_error:
-        yield iteration_custom_prompt, "", [], validation_error
+        yield iteration_custom_prompt, "", [], [], validation_error
         return
 
     iteration_prompt_source = normalize_iteration_prompt_source(iteration_prompt_source)
     iteration_custom_prompt = (iteration_custom_prompt or "").strip()
     iteration_count = int(iteration_count)
+    iteration_batch_count = min(10, max(1, int(iteration_batch_count)))
+    iteration_text_concurrency = max(1, int(iteration_text_concurrency))
+    iteration_image_concurrency = max(1, int(iteration_image_concurrency))
     retry_count, retry_delay = normalize_retry_settings(retry_count, retry_delay)
+    image_request_delay = normalize_image_request_delay(image_request_delay)
     quality = normalize_quality(quality)
     seedream_model_id = normalize_seedream_model_id(seedream_model_id)
     seedream_response_format = normalize_seedream_response_format(seedream_response_format)
@@ -2866,17 +2894,28 @@ def generate_iterative_image(
     os.makedirs(save_dir, exist_ok=True)
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     total_started_at = time.perf_counter()
-    saved_paths = []
+    final_records = []
+    process_records = []
     image_records = []
-    prompt_history = []
+    prompt_histories = {}
+    task_statuses = {}
+    failed_tasks = []
     request_size = resolve_image_request_size(image_model_provider, aspect_ratio, resolution, selected_model_id)
+    image_gate = threading.Semaphore(min(iteration_image_concurrency, iteration_batch_count))
+    text_gate = threading.Semaphore(min(iteration_text_concurrency, iteration_batch_count))
+    image_launch_lock = threading.Lock()
+    next_image_launch_at = time.perf_counter()
 
     persist_config(
         {
             "save_dir": raw_save_dir,
             "iteration_count": iteration_count,
+            "iteration_batch_count": iteration_batch_count,
+            "iteration_text_concurrency": iteration_text_concurrency,
+            "iteration_image_concurrency": iteration_image_concurrency,
             "retry_count": retry_count,
             "retry_delay": retry_delay,
+            "image_request_delay": image_request_delay,
             "image_model_provider": image_model_provider,
             "aspect_ratio": aspect_ratio,
             "resolution": resolution,
@@ -2908,14 +2947,94 @@ def generate_iterative_image(
 
     if iteration_prompt_source == "自定义提示词":
         if not iteration_custom_prompt:
-            yield iteration_custom_prompt, "", [], "请填写自定义初始提示词。"
+            yield iteration_custom_prompt, "", [], [], "请填写自定义初始提示词。"
             return
-        current_prompt = iteration_custom_prompt
-        yield current_prompt, "", [], "已使用自定义初始提示词，开始第 1 轮出图..."
+        first_prompt_for_ui = iteration_custom_prompt
     else:
-        yield iteration_custom_prompt, "", [], "正在生成初始随机提示词..."
-        try:
-            current_prompt = generate_random_prompt(
+        first_prompt_for_ui = iteration_custom_prompt
+
+    def prompt_text_for_ui():
+        parts = []
+        for task_index in sorted(prompt_histories):
+            parts.append(f"第 {task_index} 组：\n" + "\n\n".join(prompt_histories[task_index]))
+        return "\n\n".join(parts)
+
+    def status_text(prefix=""):
+        running = sum(1 for status in task_statuses.values() if status not in ("完成", "失败", "已停止"))
+        lines = [
+            f"自我迭代批量运行：生成数量 {iteration_batch_count}，迭代 {iteration_count} 轮；文本并发 {iteration_text_concurrency}，图片并发 {iteration_image_concurrency}，生图并发间隔 {image_request_delay:g} 秒。",
+            f"最终成品 {len(final_records)}/{iteration_batch_count} 张；过程图 {len(process_records)} 张；运行中 {running} 组；失败 {len(failed_tasks)} 组。",
+        ]
+        if prefix:
+            lines.insert(0, prefix)
+        if task_statuses:
+            latest = "；".join(f"第 {index} 组 {task_statuses[index]}" for index in sorted(task_statuses)[-6:])
+            lines.append(latest)
+        if failed_tasks:
+            samples = "；".join(f"第 {index} 组：{message[:180]}" for index, message in failed_tasks[-3:])
+            lines.append(f"失败详情：{samples}")
+        return "\n".join(lines)
+
+    def yield_state(prefix="", prompt_value=None):
+        return (
+            prompt_value if prompt_value is not None else first_prompt_for_ui,
+            prompt_text_for_ui(),
+            build_iterative_gallery_items(final_records, final_only=True),
+            build_iterative_gallery_items(process_records),
+            status_text(prefix),
+        )
+
+    event_queue = queue.Queue()
+
+    def put_event(kind, task_index, **payload):
+        event_queue.put({"kind": kind, "task_index": task_index, **payload})
+
+    def run_image_generation(task_index, round_index, prompt):
+        nonlocal next_image_launch_at
+        with image_gate:
+            if should_stop("iterative"):
+                raise RuntimeError("任务已停止。")
+            sleep_seconds = 0
+            with image_launch_lock:
+                now = time.perf_counter()
+                scheduled_at = max(now, next_image_launch_at)
+                sleep_seconds = max(0, scheduled_at - now)
+                next_image_launch_at = scheduled_at + image_request_delay
+            if image_request_delay > 0:
+                time.sleep(sleep_seconds)
+                if should_stop("iterative"):
+                    raise RuntimeError("任务已停止。")
+            started_at = time.perf_counter()
+            image_path = generate_one_image(
+                prompt,
+                save_dir,
+                aspect_ratio,
+                resolution,
+                image_model_provider,
+                image_base_url,
+                image_model_id,
+                quality,
+                image_api_key,
+                seedream_base_url,
+                seedream_model_id,
+                seedream_api_key,
+                seedream_response_format,
+                seedream_output_format,
+                seedream_watermark,
+                f"{timestamp}_task{task_index:02d}_round{round_index:02d}",
+                retry_count,
+                retry_delay,
+            )
+            return image_path, time.perf_counter() - started_at
+
+    def generate_initial_prompt_for_task(task_index):
+        if iteration_prompt_source == "自定义提示词":
+            return iteration_custom_prompt
+        with text_gate:
+            if should_stop("iterative"):
+                raise RuntimeError("任务已停止。")
+            put_event("status", task_index, status="正在生成初始随机提示词")
+            return generate_random_prompt(
                 random_base_url,
                 random_model_id,
                 random_api_key,
@@ -2925,74 +3044,11 @@ def generate_iterative_image(
                 retry_delay,
                 reasoning_effort=random_reasoning_effort,
             )
-        except Exception as e:
-            yield iteration_custom_prompt, "", [], f"初始随机提示词生成失败：{e}"
-            return
 
-    prompt_history.append(f"第 1 轮提示词：\n{current_prompt}")
-    persist_config({"prompt": current_prompt})
-    yield current_prompt, "\n\n".join(prompt_history), [], "初始提示词已生成，开始第 1 轮出图..."
-
-    for round_index in range(1, iteration_count + 1):
-        if should_stop("iterative"):
-            yield (
-                current_prompt,
-                "\n\n".join(prompt_history),
-                build_gallery_items(saved_paths),
-                f"已停止：已生成 {len(saved_paths)}/{iteration_count} 张。",
-            )
-            return
-        round_started_at = time.perf_counter()
-        try:
-            yield (
-                current_prompt,
-                "\n\n".join(prompt_history),
-                build_gallery_items(saved_paths),
-                f"正在生成第 {round_index}/{iteration_count} 轮图片...",
-            )
-            image_path = generate_one_image(
-                current_prompt,
-                save_dir,
-                aspect_ratio,
-                resolution,
-                image_model_provider,
-                image_base_url,
-                image_model_id,
-                quality,
-                image_api_key,
-        seedream_base_url,
-        seedream_model_id,
-                seedream_api_key,
-                seedream_response_format,
-                seedream_output_format,
-                seedream_watermark,
-                f"{timestamp}_round{round_index:02d}",
-                retry_count,
-                retry_delay,
-            )
-            saved_paths.append(image_path)
-            elapsed = time.perf_counter() - round_started_at
-            image_records.append((round_index, image_path, elapsed))
-            dimensions = get_image_dimensions(image_path) or request_size
-            yield (
-                current_prompt,
-                "\n\n".join(prompt_history),
-                build_gallery_items(saved_paths),
-                f"第 {round_index}/{iteration_count} 轮图片已生成；分辨率 {dimensions}；本轮耗时 {format_duration(elapsed)}",
-            )
-
-            if round_index >= iteration_count:
-                break
-
+    def optimize_prompt_for_task(task_index, round_index, current_prompt, image_path):
+        with text_gate:
             if should_stop("iterative"):
-                yield (
-                    current_prompt,
-                    "\n\n".join(prompt_history),
-                    build_gallery_items(saved_paths),
-                    f"已停止：已生成 {len(saved_paths)}/{iteration_count} 张。",
-                )
-                return
-
+                raise RuntimeError("任务已停止。")
             vision_protocol, vision_url = resolve_vision_protocol(
                 iteration_base_url,
                 iteration_model_id,
@@ -3000,13 +3056,12 @@ def generate_iterative_image(
             )
             preview_image = prepare_vision_image(image_path)
             upload_size_label = f"{format_bytes(preview_image['original_size'])} -> {format_bytes(preview_image['compressed_size'])}"
-            yield (
-                current_prompt,
-                "\n\n".join(prompt_history),
-                build_gallery_items(saved_paths),
-                f"正在用多模态模型评估第 {round_index} 轮图片并优化提示词... 协议：{format_protocol_label(vision_protocol)}；地址：{display_endpoint(vision_url)}；上传图片 {upload_size_label}，{preview_image['dimensions']}",
+            put_event(
+                "status",
+                task_index,
+                status=f"正在评估第 {round_index} 轮；协议 {format_protocol_label(vision_protocol)}；上传 {upload_size_label}，{preview_image['dimensions']}",
             )
-            current_prompt = optimize_prompt_with_image(
+            return optimize_prompt_with_image(
                 current_prompt,
                 image_path,
                 iteration_base_url,
@@ -3020,37 +3075,106 @@ def generate_iterative_image(
                 user_initial_direction=random_preference if iteration_prompt_source == "随机提示词" else "",
                 prepared_vision_image=preview_image,
             )
-            prompt_history.append(f"第 {round_index + 1} 轮提示词：\n{current_prompt}")
-            persist_config({"prompt": current_prompt})
-            yield (
-                current_prompt,
-                "\n\n".join(prompt_history),
-                build_gallery_items(saved_paths),
-                f"第 {round_index + 1} 轮提示词已优化完成。",
-            )
 
-        except requests.exceptions.RequestException as e:
-            yield (
-                current_prompt,
-                "\n\n".join(prompt_history),
-                build_gallery_items(saved_paths),
-                f"第 {round_index} 轮连接失败：{e}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}。",
+    def iteration_worker(task_index):
+        current_prompt = generate_initial_prompt_for_task(task_index)
+        put_event("prompt", task_index, round_index=1, prompt=current_prompt)
+        for round_index in range(1, iteration_count + 1):
+            if should_stop("iterative"):
+                raise RuntimeError("任务已停止。")
+            put_event("status", task_index, status=f"正在生成第 {round_index}/{iteration_count} 轮图片")
+            image_path, elapsed = run_image_generation(task_index, round_index, current_prompt)
+            is_final = round_index == iteration_count
+            put_event(
+                "image",
+                task_index,
+                round_index=round_index,
+                path=image_path,
+                elapsed=elapsed,
+                is_final=is_final,
             )
-            return
-        except Exception as e:
-            yield (
-                current_prompt,
-                "\n\n".join(prompt_history),
-                build_gallery_items(saved_paths),
-                f"第 {round_index} 轮处理失败：{e}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}。",
-            )
-            return
+            if is_final:
+                put_event("done", task_index, final_prompt=current_prompt)
+                return current_prompt
+            current_prompt = optimize_prompt_for_task(task_index, round_index, current_prompt, image_path)
+            put_event("prompt", task_index, round_index=round_index + 1, prompt=current_prompt)
+        return current_prompt
+
+    yield yield_state(
+        f"开始并行自我迭代：生成数量 {iteration_batch_count}，每组完整运行 {iteration_count} 轮。",
+    )
+
+    with ThreadPoolExecutor(max_workers=iteration_batch_count) as executor:
+        futures = {
+            executor.submit(iteration_worker, task_index): task_index
+            for task_index in range(1, iteration_batch_count + 1)
+        }
+        remaining = set(futures)
+
+        while remaining:
+            if should_stop("iterative"):
+                for future in remaining:
+                    future.cancel()
+                yield yield_state("已停止：正在等待已进入接口请求的任务返回。")
+                return
+
+            try:
+                event = event_queue.get(timeout=0.25)
+            except queue.Empty:
+                done = {future for future in remaining if future.done()}
+                if not done:
+                    continue
+                for future in done:
+                    remaining.remove(future)
+                    task_index = futures[future]
+                    try:
+                        final_prompt = future.result()
+                        task_statuses[task_index] = "完成"
+                        persist_config({"prompt": final_prompt})
+                    except Exception as e:
+                        message = str(e)
+                        task_statuses[task_index] = "已停止" if should_stop("iterative") else "失败"
+                        failed_tasks.append((task_index, message))
+                yield yield_state()
+                continue
+
+            task_index = event["task_index"]
+            kind = event["kind"]
+            if kind == "status":
+                task_statuses[task_index] = event["status"]
+            elif kind == "prompt":
+                prompt_histories.setdefault(task_index, []).append(
+                    f"第 {event['round_index']} 轮提示词：\n{event['prompt']}"
+                )
+                task_statuses[task_index] = f"第 {event['round_index']} 轮提示词已就绪"
+                if not first_prompt_for_ui:
+                    first_prompt_for_ui = event["prompt"]
+            elif kind == "image":
+                dimensions = get_image_dimensions(event["path"]) or request_size
+                record = {
+                    "task_index": task_index,
+                    "round_index": event["round_index"],
+                    "path": event["path"],
+                    "elapsed": event["elapsed"],
+                    "is_final": event["is_final"],
+                }
+                process_records.append(record)
+                image_records.append((len(image_records) + 1, event["path"], event["elapsed"]))
+                if event["is_final"]:
+                    final_records.append(record)
+                task_statuses[task_index] = f"第 {event['round_index']}/{iteration_count} 轮图片完成，{dimensions}，耗时 {format_duration(event['elapsed'])}"
+            elif kind == "done":
+                task_statuses[task_index] = "完成"
+                persist_config({"prompt": event["final_prompt"]})
+
+            yield yield_state()
 
     yield (
-        current_prompt,
-        "\n\n".join(prompt_history),
-        build_gallery_items(saved_paths),
-        f"自我迭代完成：图片模型 {image_model_provider}；共生成 {len(saved_paths)} 张，迭代 {iteration_count} 轮；{format_generation_stats(image_records, iteration_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}",
+        first_prompt_for_ui,
+        prompt_text_for_ui(),
+        build_iterative_gallery_items(final_records, final_only=True),
+        build_iterative_gallery_items(process_records),
+        f"自我迭代完成：图片模型 {image_model_provider}；最终成品 {len(final_records)}/{iteration_batch_count} 张；过程图 {len(process_records)} 张；失败 {len(failed_tasks)} 组；{format_generation_stats(image_records, iteration_batch_count * iteration_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}",
     )
 
 
@@ -3192,6 +3316,9 @@ def load_ui_state():
         latest_config["iteration_custom_prompt"],
         latest_config["prompt"],
         latest_config["iteration_count"],
+        latest_config["iteration_batch_count"],
+        latest_config["iteration_text_concurrency"],
+        latest_config["iteration_image_concurrency"],
         latest_config["image_model_provider"],
         latest_config["aspect_ratio"],
         latest_config["resolution"],
@@ -3323,6 +3450,20 @@ css = """
     max-height: 520px !important;
     overflow-y: auto !important;
     resize: vertical !important;
+}
+.control-row > div {
+    min-width: min(220px, 100%) !important;
+    flex: 1 1 220px !important;
+}
+.control-row .wrap,
+.control-row .form {
+    min-width: 0 !important;
+}
+[data-testid="dropdown"] input,
+[data-testid="dropdown"] .single-select,
+[data-testid="dropdown"] .token {
+    padding-right: 38px !important;
+    text-overflow: ellipsis !important;
 }
 .gallery-panel {
     min-height: 0 !important;
@@ -3752,28 +3893,62 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                             elem_classes=["prompt-history-box"],
                         )
 
-                        with gr.Row():
+                        with gr.Row(elem_classes=["control-row"]):
                             iterative_image_model_provider_input = gr.Dropdown(
                                 label="模型选择",
                                 choices=IMAGE_MODEL_PRESETS,
                                 value=CONFIG["image_model_provider"],
+                                min_width=220,
                             )
+                            iteration_batch_count_input = gr.Slider(
+                                label="生成数量",
+                                minimum=1,
+                                maximum=10,
+                                value=CONFIG["iteration_batch_count"],
+                                step=1,
+                                min_width=220,
+                            )
+
+                        with gr.Row(elem_classes=["control-row"]):
                             iteration_count_input = gr.Slider(
                                 label="迭代次数",
                                 minimum=1,
                                 maximum=6,
                                 value=CONFIG["iteration_count"],
                                 step=1,
+                                min_width=220,
+                            )
+                            iteration_text_concurrency_input = gr.Slider(
+                                label="文本并发数量",
+                                minimum=1,
+                                maximum=10,
+                                value=CONFIG["iteration_text_concurrency"],
+                                step=1,
+                                min_width=220,
+                            )
+
+                        with gr.Row(elem_classes=["control-row"]):
+                            iteration_image_concurrency_input = gr.Slider(
+                                label="图片并发数量",
+                                minimum=1,
+                                maximum=10,
+                                value=CONFIG["iteration_image_concurrency"],
+                                step=1,
+                                min_width=220,
                             )
                             iterative_aspect_ratio_input = gr.Dropdown(
                                 label="图片比例",
                                 choices=list(ASPECT_RATIOS.keys()),
                                 value=CONFIG["aspect_ratio"],
+                                min_width=220,
                             )
+
+                        with gr.Row(elem_classes=["control-row"]):
                             iterative_resolution_input = gr.Dropdown(
                                 label="分辨率",
                                 choices=list(RESOLUTION_PRESETS.keys()),
                                 value=CONFIG["resolution"],
+                                min_width=220,
                             )
 
                         with gr.Row():
@@ -3783,7 +3958,18 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                     with gr.Column(scale=6, min_width=360):
                         gr.HTML('<div class="section-title">迭代结果</div>')
                         iterative_gallery_output = gr.Gallery(
-                            label="图片画廊",
+                            label="最终图片",
+                            columns=2,
+                            rows=1,
+                            height="auto",
+                            object_fit="contain",
+                            show_label=False,
+                            allow_preview=True,
+                            elem_classes=["gallery-panel"],
+                        )
+                        gr.HTML('<div class="section-title">迭代过程</div>')
+                        iterative_process_gallery_output = gr.Gallery(
+                            label="迭代过程",
                             columns=2,
                             rows=1,
                             height="auto",
@@ -4139,8 +4325,12 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
             iterative_prompt_source_input,
             iterative_custom_prompt_input,
             iteration_count_input,
+            iteration_batch_count_input,
+            iteration_text_concurrency_input,
+            iteration_image_concurrency_input,
             settings_retry_count_input,
             settings_retry_delay_input,
+            settings_image_request_delay_input,
             iterative_image_model_provider_input,
             iterative_aspect_ratio_input,
             iterative_resolution_input,
@@ -4166,7 +4356,13 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
             settings_iteration_protocol_input,
             settings_iteration_reasoning_effort_input,
         ],
-        outputs=[iterative_custom_prompt_input, iterative_prompt_output, iterative_gallery_output, iterative_status_output],
+        outputs=[
+            iterative_custom_prompt_input,
+            iterative_prompt_output,
+            iterative_gallery_output,
+            iterative_process_gallery_output,
+            iterative_status_output,
+        ],
     )
     iterative_stop_btn.click(
         fn=lambda: request_stop("iterative"),
@@ -4231,6 +4427,9 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
         iterative_custom_prompt_input,
         iterative_prompt_output,
         iteration_count_input,
+        iteration_batch_count_input,
+        iteration_text_concurrency_input,
+        iteration_image_concurrency_input,
         iterative_image_model_provider_input,
         iterative_aspect_ratio_input,
         iterative_resolution_input,
