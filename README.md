@@ -264,9 +264,9 @@ app_config.json
 prompt_templates.py
 ```
 
-`app_config.json` 用于保存页面状态、保存目录和重试设置。接口地址、模型 ID 和 API Key 会保存到同目录的 `.env`。真实提示词模板保存在 `prompt_templates.py`。
+`app_config.json` 用于保存页面状态、保存目录和重试设置，不保存接口密钥或真实提示词。接口地址、模型 ID 和 API Key 会保存到同目录的 `.env`。真实提示词模板保存在 `prompt_templates.py`。
 
-如果 `.env` 不存在，程序会自动创建一份空配置。如果 `prompt_templates.py` 不存在，程序会从 `prompt_templates_Default.py` 复制一份默认模板。这样公开版本可以提交默认模板，个人版本只需要保留自己的 `.env` 和 `prompt_templates.py`，这两个文件默认不会进入 Git。
+如果 `app_config.json` 或 `.env` 不存在，程序会自动创建一份空配置。如果 `prompt_templates.py` 不存在，程序会从 `prompt_templates_Default.py` 复制一份默认模板。这样公开版本可以提交默认模板，个人版本只需要保留自己的 `.env` 和 `prompt_templates.py`，这些本地文件默认不会进入 Git。
 
 提示词模板支持变量，例如 `{{date}}`、`{{time}}`、`{{datetime}}`、`{{preference}}`。自我迭代的视觉提示词还支持 `{{current_prompt}}`、`{{creation_theme}}`、`{{user_initial_direction}}`、`{{image}}`。
 

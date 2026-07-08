@@ -8,6 +8,7 @@ import requests
 import gradio as gr
 from io import BytesIO
 from PIL import Image
+from pathlib import Path
 from urllib.parse import urlparse
 from config_store import load_config, save_config
 from env_loader import load_local_env, update_local_env
@@ -191,6 +192,30 @@ ENV_CONFIG_FIELDS = {
     "iteration_api_key": "ITERATION_API_KEY",
     "iteration_model_id": "ITERATION_MODEL",
 }
+PROMPT_TEMPLATE_FIELDS = {
+    "random_system_prompt": "RANDOM_SYSTEM_PROMPT",
+    "random_user_prompt": "RANDOM_USER_PROMPT",
+    "iteration_optimizer_prompt": "ITERATION_OPTIMIZER_PROMPT",
+    "reverse_prompt": "REVERSE_PROMPT",
+}
+
+
+def prompt_config_values():
+    return {
+        "random_system_prompt": RANDOM_SYSTEM_PROMPT,
+        "random_user_prompt": RANDOM_USER_PROMPT,
+        "iteration_optimizer_prompt": ITERATION_OPTIMIZER_PROMPT,
+        "reverse_prompt": REVERSE_PROMPT,
+    }
+
+
+def save_prompt_templates(updates):
+    prompt_path = Path(__file__).with_name("prompt_templates.py")
+    lines = ["# Local prompt templates. This file is intentionally ignored by Git.", ""]
+    for config_key, constant_name in PROMPT_TEMPLATE_FIELDS.items():
+        lines.append(f"{constant_name} = {updates[config_key]!r}")
+        lines.append("")
+    prompt_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
 
 def env_config_values():
@@ -246,6 +271,7 @@ def normalize_config(config):
 
 CONFIG = normalize_config(load_config(DEFAULT_CONFIG))
 CONFIG.update(env_config_values())
+CONFIG.update(prompt_config_values())
 
 CONNECT_TIMEOUT = 30
 TEXT_READ_TIMEOUT = 300
@@ -3070,6 +3096,14 @@ def save_settings(
             "iteration_api_key": iteration_api_key,
         }
     )
+    save_prompt_templates(
+        {
+            "random_system_prompt": random_system_prompt,
+            "random_user_prompt": random_user_prompt,
+            "iteration_optimizer_prompt": iteration_optimizer_prompt,
+            "reverse_prompt": reverse_prompt,
+        }
+    )
 
     persist_config(
         {
@@ -3097,18 +3131,16 @@ def save_settings(
             "retry_count": retry_count,
             "retry_delay": retry_delay,
             "image_request_delay": image_request_delay,
-            "random_system_prompt": random_system_prompt,
-            "random_user_prompt": random_user_prompt,
-            "iteration_optimizer_prompt": iteration_optimizer_prompt,
-            "reverse_prompt": reverse_prompt,
         },
     )
+    CONFIG.update(prompt_config_values())
     return "设置已保存。"
 
 
 def load_ui_state():
     latest_config = normalize_config(load_config(DEFAULT_CONFIG))
     latest_config.update(env_config_values())
+    latest_config.update(prompt_config_values())
     CONFIG.clear()
     CONFIG.update(latest_config)
     return [
