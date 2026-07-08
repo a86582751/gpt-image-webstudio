@@ -1,5 +1,6 @@
 import base64
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+import ast
 import json
 import os
 import re
@@ -201,12 +202,27 @@ PROMPT_TEMPLATE_FIELDS = {
 
 
 def prompt_config_values():
-    return {
+    values = {
         "random_system_prompt": RANDOM_SYSTEM_PROMPT,
         "random_user_prompt": RANDOM_USER_PROMPT,
         "iteration_optimizer_prompt": ITERATION_OPTIMIZER_PROMPT,
         "reverse_prompt": REVERSE_PROMPT,
     }
+    prompt_path = Path(__file__).with_name("prompt_templates.py")
+    try:
+        tree = ast.parse(prompt_path.read_text(encoding="utf-8"))
+        constant_to_config = {constant_name: config_key for config_key, constant_name in PROMPT_TEMPLATE_FIELDS.items()}
+        for node in tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in constant_to_config:
+                    value = ast.literal_eval(node.value)
+                    if isinstance(value, str):
+                        values[constant_to_config[target.id]] = value
+    except (OSError, SyntaxError, ValueError):
+        pass
+    return values
 
 
 def save_prompt_templates(updates):
