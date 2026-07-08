@@ -8,7 +8,16 @@ import gradio as gr
 from io import BytesIO
 from PIL import Image
 from urllib.parse import urlparse
-from config_store import load_config, update_config
+from config_store import load_config, save_config
+from env_loader import load_local_env, update_local_env
+from prompt_templates import (
+    ITERATION_OPTIMIZER_PROMPT,
+    RANDOM_SYSTEM_PROMPT,
+    RANDOM_USER_PROMPT,
+    REVERSE_PROMPT,
+)
+
+load_local_env()
 
 BASE_URL = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
 API_KEY = os.getenv("OPENAI_API_KEY", "")
@@ -19,7 +28,22 @@ RANDOM_MODEL_ID = os.getenv("RANDOM_PROMPT_MODEL", "")
 ITERATION_BASE_URL = os.getenv("ITERATION_BASE_URL", "").rstrip("/")
 ITERATION_API_KEY = os.getenv("ITERATION_API_KEY", "")
 ITERATION_MODEL_ID = os.getenv("ITERATION_MODEL", "")
+SEEDREAM_BASE_URL = os.getenv("SEEDREAM_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3").rstrip("/")
+SEEDREAM_API_KEY = os.getenv("SEEDREAM_API_KEY", "")
+DEFAULT_SEEDREAM_MODEL_ID = "doubao-seedream-5-0-pro-260628"
+SEEDREAM_MODEL_ID = os.getenv("SEEDREAM_MODEL", DEFAULT_SEEDREAM_MODEL_ID).strip() or DEFAULT_SEEDREAM_MODEL_ID
 QUALITY_PRESETS = ["auto", "medium", "high", "low"]
+IMAGE_MODEL_PRESETS = ["GPT Image", "豆包 Seedream"]
+SEEDREAM_PRO_MODEL_IDS = {"doubao-seedream-5-0-pro-260628"}
+SEEDREAM_LITE_MODEL_IDS = {"doubao-seedream-5-0-260128", "doubao-seedream-5-0-lite-260128"}
+SEEDREAM_MODEL_ID_PRESETS = [
+    "doubao-seedream-5-0-pro-260628",
+    "doubao-seedream-5-0-lite-260128",
+    "doubao-seedream-5-0-260128",
+]
+SEEDREAM_RESPONSE_FORMAT_PRESETS = ["url", "b64_json"]
+SEEDREAM_OUTPUT_FORMAT_PRESETS = ["自动", "jpeg", "png"]
+SEEDREAM_WATERMARK_PRESETS = ["关闭", "开启"]
 MODEL_PROTOCOL_PRESETS = ["自动识别", "OpenAI Chat", "OpenAI Responses", "Gemini 原生", "Claude Messages"]
 ITERATION_PROMPT_SOURCE_PRESETS = ["随机提示词", "自定义提示词"]
 REASONING_EFFORT_PRESETS = ["关闭", "低", "中", "高", "最高"]
@@ -33,45 +57,6 @@ STOP_FLAGS = {
     "reverse": False,
 }
 
-RANDOM_SYSTEM_PROMPT = """你是一位专业的AI视觉创意提示词工程师。你的任务是生成一段适合AI图像生成的高质量中文关键词组合，强调电影感、艺术构图、空间层次、细腻光影和富有故事感的视觉氛围。
-
-**格式规则：**
-1. 必须使用中文逗号`，`分隔关键词和短语。
-2. 必须以核心质量词开头，如：`杰作，最佳质量，超高细节，电影感摄影`。
-3. 内容顺序应大致遵循：`核心质量 -> 主体 -> 外貌或物体特征 -> 服装或材质 -> 姿态或动作 -> 场景 -> 光影 -> 色彩 -> 画风`。
-4. 严禁输出解释、段落说明或无关文字；只输出可直接用于图像生成的提示词。"""
-
-RANDOM_USER_PROMPT = """请创建一段随机图像生成提示词。
-
-要求：
-（突出电影感、艺术性、空间层次、情绪氛围和故事感）
-（可以包含人物、风景、建筑、静物或幻想场景）
-（场景应具体、鲜明，避免空泛描述）
-（不要出现敏感、露骨、血腥、仇恨或违法内容）
-（输出必须是中文关键词组合，不要解释）"""
-
-ITERATION_OPTIMIZER_PROMPT = """你是一位专业的AI图像视觉评估师与提示词优化专家。我将为你提供一张AI生成图片，以及生成该图片所使用的提示词。
-
-你的任务是：审视这张图片，判断它在主体表达、构图、空间层次、光影氛围、色彩关系、材质细节和故事感上的可提升空间，并输出一段全新优化过的中文提示词，让下一轮生成的图片更具电影感、艺术表现力和视觉完成度。
-
-**评估与优化方向（在脑内进行，不要写出来）：**
-1. 主体与构图：强化主体辨识度、姿态或物体形态、视线引导、前中后景层次。
-2. 场景与叙事：让环境更具体，增加能够激发想象的故事线索和空间细节。
-3. 光影与色彩：加入更明确的光源、时间、色温、阴影层次、胶片或摄影质感。
-4. 画面质感：增强材质、纹理、镜头语言和艺术风格的一致性。
-
-**输出要求：**
-你只能输出一串用于AI绘画的中文词组。
-必须使用中文逗号分隔。
-顺序遵循：核心质量 -> 主体特征 -> 细节与材质 -> 动作或构图 -> 环境背景 -> 光影色彩 -> 画风质感。
-不要输出评估过程、解释、标题或无关文字。"""
-
-REVERSE_PROMPT = """你是一位专业的AI图像生成提示词工程师。请仔细观察这张图像，并反推出一段可用于AI图像生成的中文提示词。
-
-请覆盖主体、前景、中景、背景、构图、视觉引导、材质、色彩、光影氛围、镜头语言、艺术风格和画面质感等细节，让提示词具有深度、氛围和艺术感。
-
-要求：只输出中文提示词，不要描述水印、签名、边框或无关文字，不要解释，不要总结，不要添加标题或符号，限制在800字以内。"""
-
 ASPECT_RATIOS = {
     "1:1 正方形": {
         "标准": "1248x1248",
@@ -83,15 +68,20 @@ ASPECT_RATIOS = {
         "高清": "2048x1536",
         "超清": "3264x2448",
     },
-    "3:2 横图": {
-        "标准": "1536x1024",
-        "高清": "2160x1440",
-        "超清": "3546x2304",
+    "3:4 竖图": {
+        "标准": "1072x1440",
+        "高清": "1536x2048",
+        "超清": "2448x3264",
     },
     "16:9 宽屏": {
         "标准": "1664x928",
         "高清": "2560x1440",
         "超清": "3840x2160",
+    },
+    "9:16 竖屏": {
+        "标准": "928x1664",
+        "高清": "1440x2560",
+        "超清": "2160x3840",
     },
 }
 
@@ -114,10 +104,17 @@ DEFAULT_CONFIG = {
     "image_request_delay": 0,
     "aspect_ratio": "4:3 横图",
     "resolution": "高清",
+    "image_model_provider": "GPT Image",
     "base_url": BASE_URL,
     "model_id": MODEL_ID,
     "quality": "auto",
     "api_key": API_KEY,
+    "seedream_base_url": SEEDREAM_BASE_URL,
+    "seedream_model_id": SEEDREAM_MODEL_ID,
+    "seedream_api_key": SEEDREAM_API_KEY,
+    "seedream_response_format": "url",
+    "seedream_output_format": "自动",
+    "seedream_watermark": "关闭",
     "edit_input_fidelity": "high",
     "random_base_url": RANDOM_BASE_URL,
     "random_model_id": RANDOM_MODEL_ID,
@@ -139,14 +136,76 @@ DEFAULT_CONFIG = {
     "reverse_prompt": REVERSE_PROMPT,
 }
 
+
+def normalize_seedream_model_id(model_id):
+    model_id = (model_id or "").strip()
+    return model_id or DEFAULT_SEEDREAM_MODEL_ID
+
+
+def seedream_model_family(model_id):
+    model_id = normalize_seedream_model_id(model_id)
+    if model_id in SEEDREAM_LITE_MODEL_IDS:
+        return "lite"
+    if model_id in SEEDREAM_PRO_MODEL_IDS:
+        return "pro"
+    lowered = model_id.lower()
+    if "lite" in lowered:
+        return "lite"
+    return "pro"
+
+
+ENV_CONFIG_FIELDS = {
+    "base_url": "OPENAI_BASE_URL",
+    "api_key": "OPENAI_API_KEY",
+    "model_id": "OPENAI_IMAGE_MODEL",
+    "seedream_base_url": "SEEDREAM_BASE_URL",
+    "seedream_api_key": "SEEDREAM_API_KEY",
+    "seedream_model_id": "SEEDREAM_MODEL",
+    "random_base_url": "RANDOM_PROMPT_BASE_URL",
+    "random_api_key": "RANDOM_PROMPT_API_KEY",
+    "random_model_id": "RANDOM_PROMPT_MODEL",
+    "iteration_base_url": "ITERATION_BASE_URL",
+    "iteration_api_key": "ITERATION_API_KEY",
+    "iteration_model_id": "ITERATION_MODEL",
+}
+
+
+def env_config_values():
+    values = {}
+    for config_key, env_key in ENV_CONFIG_FIELDS.items():
+        if env_key in os.environ:
+            value = os.getenv(env_key, "")
+            values[config_key] = value.rstrip("/") if config_key.endswith("base_url") else value
+    values["seedream_model_id"] = normalize_seedream_model_id(values.get("seedream_model_id", CONFIG.get("seedream_model_id", DEFAULT_SEEDREAM_MODEL_ID) if "CONFIG" in globals() else SEEDREAM_MODEL_ID))
+    return values
+
+
+def save_env_config(updates):
+    env_updates = {
+        env_key: updates[config_key]
+        for config_key, env_key in ENV_CONFIG_FIELDS.items()
+        if config_key in updates
+    }
+    update_local_env(env_updates)
+
+
 def normalize_config(config):
     config = config.copy()
     if config["aspect_ratio"] not in ASPECT_RATIOS:
         config["aspect_ratio"] = DEFAULT_CONFIG["aspect_ratio"]
     if config["resolution"] not in RESOLUTION_PRESETS:
         config["resolution"] = DEFAULT_CONFIG["resolution"]
+    if config["image_model_provider"] not in IMAGE_MODEL_PRESETS:
+        config["image_model_provider"] = DEFAULT_CONFIG["image_model_provider"]
     if config["quality"] not in QUALITY_PRESETS:
         config["quality"] = DEFAULT_CONFIG["quality"]
+    if config["seedream_response_format"] not in SEEDREAM_RESPONSE_FORMAT_PRESETS:
+        config["seedream_response_format"] = DEFAULT_CONFIG["seedream_response_format"]
+    if config["seedream_output_format"] not in SEEDREAM_OUTPUT_FORMAT_PRESETS:
+        config["seedream_output_format"] = DEFAULT_CONFIG["seedream_output_format"]
+    if config["seedream_watermark"] not in SEEDREAM_WATERMARK_PRESETS:
+        config["seedream_watermark"] = DEFAULT_CONFIG["seedream_watermark"]
+    config["seedream_model_id"] = normalize_seedream_model_id(config.get("seedream_model_id"))
     if config["edit_input_fidelity"] not in INPUT_FIDELITY_PRESETS:
         config["edit_input_fidelity"] = DEFAULT_CONFIG["edit_input_fidelity"]
     if config["random_protocol"] not in MODEL_PROTOCOL_PRESETS:
@@ -163,6 +222,7 @@ def normalize_config(config):
 
 
 CONFIG = normalize_config(load_config(DEFAULT_CONFIG))
+CONFIG.update(env_config_values())
 
 CONNECT_TIMEOUT = 30
 TEXT_READ_TIMEOUT = 300
@@ -177,7 +237,14 @@ EDIT_INPUT_JPEG_QUALITY = 92
 
 def persist_config(updates):
     """Persist UI state and keep the in-memory config aligned for later callbacks."""
-    update_config(DEFAULT_CONFIG, updates)
+    persisted_updates = {key: value for key, value in updates.items() if key not in ENV_CONFIG_FIELDS}
+    if persisted_updates:
+        config = load_config(DEFAULT_CONFIG)
+        config.update(persisted_updates)
+        for env_key in ENV_CONFIG_FIELDS:
+            config.pop(env_key, None)
+        config.pop("seedream_model_version", None)
+        save_config(config)
     CONFIG.update(updates)
 
 
@@ -186,10 +253,70 @@ def resolve_size(aspect_ratio, resolution):
     resolution_key = RESOLUTION_PRESETS.get(resolution, "高清")
     return ratio_sizes[resolution_key]
 
+def resolve_seedream_size(_aspect_ratio, resolution, model_id=""):
+    resolution_key = RESOLUTION_PRESETS.get(resolution, "高清")
+    if seedream_model_family(model_id) == "lite":
+        return {
+            "标准": "2K",
+            "高清": "3K",
+            "超清": "4K",
+        }.get(resolution_key, "3K")
+    return {
+        "标准": "1K",
+        "高清": "2K",
+        "超清": "2K",
+    }.get(resolution_key, "2K")
+
+
+def resolve_image_request_size(provider, aspect_ratio, resolution, model_id=""):
+    if normalize_image_model_provider(provider) == "豆包 Seedream":
+        return resolve_seedream_size(aspect_ratio, resolution, model_id)
+    return resolve_size(aspect_ratio, resolution)
+
 
 def normalize_quality(quality):
     quality = (quality or "auto").strip()
     return quality if quality in QUALITY_PRESETS else "auto"
+
+
+def normalize_image_model_provider(provider):
+    provider = (provider or "GPT Image").strip()
+    return provider if provider in IMAGE_MODEL_PRESETS else "GPT Image"
+
+
+def normalize_seedream_response_format(response_format):
+    response_format = (response_format or "url").strip()
+    return response_format if response_format in SEEDREAM_RESPONSE_FORMAT_PRESETS else "url"
+
+
+def normalize_seedream_output_format(output_format):
+    output_format = (output_format or "自动").strip()
+    return output_format if output_format in SEEDREAM_OUTPUT_FORMAT_PRESETS else "自动"
+
+
+def normalize_seedream_watermark(watermark):
+    watermark = (watermark or "关闭").strip()
+    return watermark if watermark in SEEDREAM_WATERMARK_PRESETS else "关闭"
+
+
+def seedream_watermark_enabled(watermark):
+    return normalize_seedream_watermark(watermark) == "开启"
+
+
+def seedream_aspect_ratio_text(aspect_ratio):
+    return {
+        "1:1 正方形": "1:1 正方形",
+        "4:3 横图": "4:3 横图",
+        "3:4 竖图": "3:4 竖图",
+        "16:9 宽屏": "16:9 宽屏横图",
+        "9:16 竖屏": "9:16 竖屏图",
+    }.get(aspect_ratio, aspect_ratio or "4:3 横图")
+
+
+def build_seedream_prompt(prompt, aspect_ratio):
+    prompt = (prompt or "").strip()
+    ratio_text = seedream_aspect_ratio_text(aspect_ratio)
+    return f"{prompt}\n\n图片比例：{ratio_text}。"
 
 
 def normalize_protocol(protocol):
@@ -340,6 +467,22 @@ def resolve_api_url(base_url):
     if base_url.endswith("/v1"):
         return f"{base_url}/images/generations"
     return f"{base_url}/v1/images/generations"
+
+
+def resolve_seedream_api_url(base_url):
+    base_url = (base_url or "").strip().rstrip("/")
+    if not base_url:
+        raise ValueError("请填写 Seedream API 地址。")
+    if not base_url.startswith(("http://", "https://")):
+        base_url = f"https://{base_url}"
+
+    parsed_url = urlparse(base_url)
+    if not parsed_url.scheme or not parsed_url.netloc:
+        raise ValueError("Seedream API 地址格式不正确，请填写类似 https://ark.cn-beijing.volces.com/api/v3 的地址。")
+
+    if base_url.endswith("/images/generations"):
+        return base_url
+    return f"{base_url}/images/generations"
 
 
 def resolve_edit_api_url(base_url):
@@ -831,6 +974,29 @@ def prepare_edit_input_image(image_path):
         "dimensions": dimensions,
         "compressed": True,
     }
+
+
+def prepare_seedream_input_image(image_path):
+    image = prepare_edit_input_image(image_path)
+    image["data_url"] = f"data:{image['mime_type']};base64,{base64.b64encode(image['bytes']).decode('utf-8')}"
+    return image
+
+
+def build_seedream_payload(prompt, size, model_id, aspect_ratio, response_format="url", output_format="自动", watermark="关闭", input_images=None):
+    payload = {
+        "model": model_id.strip(),
+        "prompt": build_seedream_prompt(prompt, aspect_ratio),
+        "size": size,
+        "response_format": normalize_seedream_response_format(response_format),
+        "watermark": seedream_watermark_enabled(watermark),
+    }
+    output_format = normalize_seedream_output_format(output_format)
+    if output_format != "自动":
+        payload["output_format"] = output_format
+    if input_images:
+        image_values = [image["data_url"] for image in input_images]
+        payload["image"] = image_values[0] if len(image_values) == 1 else image_values
+    return payload
 
 
 def optimize_prompt_with_image(
@@ -1384,27 +1550,58 @@ def generate_one_image(
     save_dir,
     aspect_ratio,
     resolution,
+    image_model_provider,
     base_url,
     model_id,
     quality,
     api_key,
+    seedream_base_url,
+    seedream_model_id,
+    seedream_api_key,
+    seedream_response_format,
+    seedream_output_format,
+    seedream_watermark,
     timestamp,
     retry_count=1,
     retry_delay=2,
     on_retry=None,
 ):
-    size = resolve_size(aspect_ratio, resolution)
+    image_model_provider = normalize_image_model_provider(image_model_provider)
+    active_base_url = seedream_base_url if image_model_provider == "豆包 Seedream" else base_url
+    active_model_id = seedream_model_id if image_model_provider == "豆包 Seedream" else model_id
+    active_api_key = seedream_api_key if image_model_provider == "豆包 Seedream" else api_key
+    size = resolve_image_request_size(image_model_provider, aspect_ratio, resolution, active_model_id)
     quality = normalize_quality(quality)
     saved_paths = []
-    image_items = run_with_retry(
-        lambda: parse_image_items(
+
+    def request_image():
+        if image_model_provider == "豆包 Seedream":
+            return parse_image_items(
+                post_json(
+                    resolve_seedream_api_url(active_base_url),
+                    headers={
+                        "Authorization": f"Bearer {active_api_key.strip()}",
+                    },
+                    payload=build_seedream_payload(
+                        prompt,
+                        size,
+                        active_model_id,
+                        aspect_ratio,
+                        seedream_response_format,
+                        seedream_output_format,
+                        seedream_watermark,
+                    ),
+                    timeout=request_timeout(IMAGE_READ_TIMEOUT),
+                )
+            )
+        return parse_image_items(
             post_json(
-                resolve_api_url(base_url),
+                resolve_api_url(active_base_url),
                 headers={
-                    "Authorization": f"Bearer {api_key.strip()}",
+                    "Authorization": f"Bearer {active_api_key.strip()}",
                 },
                 payload={
-                    "model": model_id.strip(),
+                    "model": active_model_id.strip(),
                     "size": size,
                     "n": 1,
                     "quality": quality,
@@ -1413,7 +1610,10 @@ def generate_one_image(
                 },
                 timeout=request_timeout(IMAGE_READ_TIMEOUT),
             )
-        ),
+        )
+
+    image_items = run_with_retry(
+        request_image,
         "图片生成",
         retries=int(retry_count),
         delay_seconds=float(retry_delay),
@@ -1431,28 +1631,61 @@ def generate_one_image_edit(
     save_dir,
     aspect_ratio,
     resolution,
+    image_model_provider,
     base_url,
     model_id,
     quality,
     api_key,
+    seedream_base_url,
+    seedream_model_id,
+    seedream_api_key,
+    seedream_response_format,
+    seedream_output_format,
+    seedream_watermark,
     input_fidelity,
     timestamp,
     retry_count=1,
     retry_delay=2,
     on_retry=None,
 ):
-    size = resolve_size(aspect_ratio, resolution)
+    image_model_provider = normalize_image_model_provider(image_model_provider)
+    active_base_url = seedream_base_url if image_model_provider == "豆包 Seedream" else base_url
+    active_model_id = seedream_model_id if image_model_provider == "豆包 Seedream" else model_id
+    active_api_key = seedream_api_key if image_model_provider == "豆包 Seedream" else api_key
+    size = resolve_image_request_size(image_model_provider, aspect_ratio, resolution, active_model_id)
     quality = normalize_quality(quality)
     input_fidelity = input_fidelity if input_fidelity in INPUT_FIDELITY_PRESETS else "high"
-    prepared_images = [prepare_edit_input_image(path) for path in input_images]
+    prepared_images = [
+        prepare_seedream_input_image(path) if image_model_provider == "豆包 Seedream" else prepare_edit_input_image(path)
+        for path in input_images
+    ]
     saved_paths = []
 
     def request_edit():
+        if image_model_provider == "豆包 Seedream":
+            return parse_image_items(
+                post_json(
+                    resolve_seedream_api_url(active_base_url),
+                    headers={"Authorization": f"Bearer {active_api_key.strip()}"},
+                    payload=build_seedream_payload(
+                        prompt,
+                        size,
+                        active_model_id,
+                        aspect_ratio,
+                        seedream_response_format,
+                        seedream_output_format,
+                        seedream_watermark,
+                        prepared_images,
+                    ),
+                    timeout=request_timeout(IMAGE_READ_TIMEOUT),
+                )
+            )
+
         files = []
         for image in prepared_images:
             files.append(("image[]", (image["filename"], BytesIO(image["bytes"]), image["mime_type"])))
         data = {
-            "model": model_id.strip(),
+            "model": active_model_id.strip(),
             "prompt": prompt.strip(),
             "size": size,
             "n": "1",
@@ -1460,8 +1693,8 @@ def generate_one_image_edit(
             "input_fidelity": input_fidelity,
         }
         response = requests.post(
-            resolve_edit_api_url(base_url),
-            headers={"Authorization": f"Bearer {api_key.strip()}"},
+            resolve_edit_api_url(active_base_url),
+            headers={"Authorization": f"Bearer {active_api_key.strip()}"},
             data=data,
             files=files,
             timeout=request_timeout(IMAGE_READ_TIMEOUT),
@@ -1513,10 +1746,17 @@ def generate_images_concurrently(
     save_dir,
     aspect_ratio,
     resolution,
+    image_model_provider,
     base_url,
     model_id,
     quality,
     api_key,
+    seedream_base_url,
+    seedream_model_id,
+    seedream_api_key,
+    seedream_response_format,
+    seedream_output_format,
+    seedream_watermark,
     concurrency,
     retry_count=1,
     retry_delay=2,
@@ -1534,7 +1774,9 @@ def generate_images_concurrently(
     failed_jobs = []
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     total_started_at = time.perf_counter()
-    request_size = resolve_size(aspect_ratio, resolution)
+    image_model_provider = normalize_image_model_provider(image_model_provider)
+    active_model_id = seedream_model_id if image_model_provider == "豆包 Seedream" else model_id
+    request_size = resolve_image_request_size(image_model_provider, aspect_ratio, resolution, active_model_id)
     quality = normalize_quality(quality)
     image_request_delay = normalize_image_request_delay(image_request_delay)
 
@@ -1544,7 +1786,7 @@ def generate_images_concurrently(
 
     yield (
         build_gallery_items(saved_paths),
-        f"开始生成 {total_count} 张；最大并发 {concurrency}；生图并发间隔 {image_request_delay:g} 秒；请求尺寸 {request_size}；品质 {quality}",
+        f"开始生成 {total_count} 张；图片模型 {image_model_provider}；最大并发 {concurrency}；生图并发间隔 {image_request_delay:g} 秒；请求尺寸 {request_size}；品质 {quality}",
     )
 
     def worker(job):
@@ -1562,10 +1804,17 @@ def generate_images_concurrently(
             save_dir,
             aspect_ratio,
             resolution,
+            image_model_provider,
             base_url,
             model_id,
             quality,
             api_key,
+            seedream_base_url,
+                seedream_model_id,
+            seedream_api_key,
+            seedream_response_format,
+            seedream_output_format,
+            seedream_watermark,
             f"{timestamp}_job{job_index:02d}",
             retry_count,
             retry_delay,
@@ -1634,7 +1883,7 @@ def generate_images_concurrently(
     failed_summary = f"；失败 {len(failed_jobs)} 张" if failed_jobs else ""
     yield (
         build_gallery_items(saved_paths),
-        f"生成完成：共保存 {len(saved_paths)} 张{failed_summary}；{format_generation_stats(image_records, total_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}{format_failed_jobs_summary(failed_jobs)}",
+        f"生成完成：图片模型 {image_model_provider}；共保存 {len(saved_paths)} 张{failed_summary}；{format_generation_stats(image_records, total_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}{format_failed_jobs_summary(failed_jobs)}",
     )
 
 
@@ -1669,10 +1918,17 @@ def generate_image_edits_concurrently(
     image_count,
     aspect_ratio,
     resolution,
+    image_model_provider,
     base_url,
     model_id,
     quality,
     api_key,
+    seedream_base_url,
+    seedream_model_id,
+    seedream_api_key,
+    seedream_response_format,
+    seedream_output_format,
+    seedream_watermark,
     input_fidelity,
     concurrency,
     retry_count=1,
@@ -1688,18 +1944,23 @@ def generate_image_edits_concurrently(
     failed_jobs = []
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     total_started_at = time.perf_counter()
-    request_size = resolve_size(aspect_ratio, resolution)
+    image_model_provider = normalize_image_model_provider(image_model_provider)
+    active_model_id = seedream_model_id if image_model_provider == "豆包 Seedream" else model_id
+    request_size = resolve_image_request_size(image_model_provider, aspect_ratio, resolution, active_model_id)
     quality = normalize_quality(quality)
     image_request_delay = normalize_image_request_delay(image_request_delay)
     try:
-        prepared_preview = [prepare_edit_input_image(path) for path in input_images]
+        prepared_preview = [
+            prepare_seedream_input_image(path) if image_model_provider == "豆包 Seedream" else prepare_edit_input_image(path)
+            for path in input_images
+        ]
     except Exception as e:
         yield build_gallery_items(saved_paths), f"参考图读取或压缩失败：{e}"
         return
 
     yield (
         build_gallery_items(saved_paths),
-        f"开始图片编辑 {image_count} 张；最大并发 {concurrency}；生图并发间隔 {image_request_delay:g} 秒；请求尺寸 {request_size}；品质 {quality}；输入保真度 {input_fidelity}；{format_edit_input_summary(prepared_preview)}",
+        f"开始图片编辑 {image_count} 张；图片模型 {image_model_provider}；最大并发 {concurrency}；生图并发间隔 {image_request_delay:g} 秒；请求尺寸 {request_size}；品质 {quality}；输入保真度 {input_fidelity}；{format_edit_input_summary(prepared_preview)}",
     )
 
     def worker(job_index):
@@ -1717,10 +1978,17 @@ def generate_image_edits_concurrently(
             save_dir,
             aspect_ratio,
             resolution,
+            image_model_provider,
             base_url,
             model_id,
             quality,
             api_key,
+            seedream_base_url,
+                seedream_model_id,
+            seedream_api_key,
+            seedream_response_format,
+            seedream_output_format,
+            seedream_watermark,
             input_fidelity,
             f"{timestamp}_edit{job_index:02d}",
             retry_count,
@@ -1784,7 +2052,7 @@ def generate_image_edits_concurrently(
 
     yield (
         build_gallery_items(saved_paths),
-        f"图片编辑完成：共保存 {len(saved_paths)} 张；失败 {len(failed_jobs)} 张；{format_generation_stats(image_records, image_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；输入保真度 {input_fidelity}；目录 {save_dir}{format_failed_jobs_summary(failed_jobs)}",
+        f"图片编辑完成：图片模型 {image_model_provider}；共保存 {len(saved_paths)} 张；失败 {len(failed_jobs)} 张；{format_generation_stats(image_records, image_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；输入保真度 {input_fidelity}；目录 {save_dir}{format_failed_jobs_summary(failed_jobs)}",
     )
 
 
@@ -1794,10 +2062,17 @@ def generate_images_from_prompt(
     image_count,
     aspect_ratio,
     resolution,
+    image_model_provider,
     base_url,
     model_id,
     quality,
     api_key,
+    seedream_base_url,
+    seedream_model_id,
+    seedream_api_key,
+    seedream_response_format,
+    seedream_output_format,
+    seedream_watermark,
     concurrency=1,
     retry_count=1,
     retry_delay=2,
@@ -1806,37 +2081,101 @@ def generate_images_from_prompt(
 ):
     prompt_jobs = [(index, prompt) for index in range(1, int(image_count) + 1)]
     yield from generate_images_concurrently(
-        prompt_jobs,
-        save_dir,
-        aspect_ratio,
-        resolution,
-        base_url,
-        model_id,
-        quality,
-        api_key,
-        concurrency,
-        retry_count,
-        retry_delay,
-        image_request_delay,
-        stop_mode,
+        prompt_jobs=prompt_jobs,
+        save_dir=save_dir,
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        image_model_provider=image_model_provider,
+        base_url=base_url,
+        model_id=model_id,
+        quality=quality,
+        api_key=api_key,
+        seedream_base_url=seedream_base_url,
+        seedream_model_id=seedream_model_id,
+        seedream_api_key=seedream_api_key,
+        seedream_response_format=seedream_response_format,
+        seedream_output_format=seedream_output_format,
+        seedream_watermark=seedream_watermark,
+        concurrency=concurrency,
+        retry_count=retry_count,
+        retry_delay=retry_delay,
+        image_request_delay=image_request_delay,
+        stop_mode=stop_mode,
     )
 
 
-def generate_image(prompt, save_dir, image_count, concurrency, retry_count, retry_delay, image_request_delay, aspect_ratio, resolution, base_url, model_id, quality, api_key):
+def resolve_selected_image_config(
+    image_model_provider,
+    base_url,
+    model_id,
+    api_key,
+    seedream_base_url,
+    seedream_model_id,
+    seedream_api_key,
+):
+    image_model_provider = normalize_image_model_provider(image_model_provider)
+    if image_model_provider == "豆包 Seedream":
+        return image_model_provider, seedream_base_url, seedream_model_id, seedream_api_key
+    return image_model_provider, base_url, model_id, api_key
+
+
+def validate_selected_image_config(image_model_provider, selected_model_id, selected_api_key):
+    if not selected_api_key or not selected_api_key.strip():
+        yield_message = "请填写 Seedream API Key。" if image_model_provider == "豆包 Seedream" else "请填写图片生成 API Key。"
+        return yield_message
+    if not selected_model_id or not selected_model_id.strip():
+        yield_message = "请填写 Seedream 模型 ID。" if image_model_provider == "豆包 Seedream" else "请填写图片生成模型 ID。"
+        return yield_message
+    return ""
+
+
+def generate_image(
+    prompt,
+    save_dir,
+    image_count,
+    concurrency,
+    retry_count,
+    retry_delay,
+    image_request_delay,
+    image_model_provider,
+    aspect_ratio,
+    resolution,
+    base_url,
+    model_id,
+    quality,
+    api_key,
+    seedream_base_url,
+    seedream_model_id,
+    seedream_api_key,
+    seedream_response_format,
+    seedream_output_format,
+    seedream_watermark,
+):
     reset_stop_flag("manual")
     if not prompt or not prompt.strip():
         yield [], "请先输入提示词。"
         return
-    if not api_key or not api_key.strip():
-        yield [], "请填写 API Key。"
-        return
-    if not model_id or not model_id.strip():
-        yield [], "请填写模型 ID。"
+    image_model_provider, _selected_base_url, selected_model_id, selected_api_key = resolve_selected_image_config(
+        image_model_provider,
+        base_url,
+        model_id,
+        api_key,
+        seedream_base_url,
+        seedream_model_id,
+        seedream_api_key,
+    )
+    validation_error = validate_selected_image_config(image_model_provider, selected_model_id, selected_api_key)
+    if validation_error:
+        yield [], validation_error
         return
 
     retry_count, retry_delay = normalize_retry_settings(retry_count, retry_delay)
     image_request_delay = normalize_image_request_delay(image_request_delay)
     quality = normalize_quality(quality)
+    seedream_model_id = normalize_seedream_model_id(seedream_model_id)
+    seedream_response_format = normalize_seedream_response_format(seedream_response_format)
+    seedream_output_format = normalize_seedream_output_format(seedream_output_format)
+    seedream_watermark = normalize_seedream_watermark(seedream_watermark)
 
     persist_config(
         {
@@ -1847,30 +2186,44 @@ def generate_image(prompt, save_dir, image_count, concurrency, retry_count, retr
             "retry_count": int(retry_count),
             "retry_delay": float(retry_delay),
             "image_request_delay": image_request_delay,
+            "image_model_provider": image_model_provider,
             "aspect_ratio": aspect_ratio,
             "resolution": resolution,
             "base_url": base_url,
             "model_id": model_id,
             "quality": quality,
             "api_key": api_key,
+            "seedream_base_url": seedream_base_url,
+            "seedream_model_id": seedream_model_id,
+            "seedream_api_key": seedream_api_key,
+            "seedream_response_format": seedream_response_format,
+            "seedream_output_format": seedream_output_format,
+            "seedream_watermark": seedream_watermark,
         },
     )
 
     yield from generate_images_from_prompt(
-        prompt,
-        save_dir,
-        image_count,
-        aspect_ratio,
-        resolution,
-        base_url,
-        model_id,
-        quality,
-        api_key,
-        concurrency,
-        retry_count,
-        retry_delay,
-        image_request_delay,
-        "manual",
+        prompt=prompt,
+        save_dir=save_dir,
+        image_count=image_count,
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        image_model_provider=image_model_provider,
+        base_url=base_url,
+        model_id=model_id,
+        quality=quality,
+        api_key=api_key,
+        seedream_base_url=seedream_base_url,
+        seedream_model_id=seedream_model_id,
+        seedream_api_key=seedream_api_key,
+        seedream_response_format=seedream_response_format,
+        seedream_output_format=seedream_output_format,
+        seedream_watermark=seedream_watermark,
+        concurrency=concurrency,
+        retry_count=retry_count,
+        retry_delay=retry_delay,
+        image_request_delay=image_request_delay,
+        stop_mode="manual",
     )
 
 
@@ -1883,12 +2236,19 @@ def generate_image_edit(
     retry_count,
     retry_delay,
     image_request_delay,
+    image_model_provider,
     aspect_ratio,
     resolution,
     base_url,
     model_id,
     quality,
     api_key,
+    seedream_base_url,
+    seedream_model_id,
+    seedream_api_key,
+    seedream_response_format,
+    seedream_output_format,
+    seedream_watermark,
     input_fidelity,
 ):
     reset_stop_flag("edit")
@@ -1902,16 +2262,27 @@ def generate_image_edit(
     if not prompt or not prompt.strip():
         yield [], "请先输入编辑提示词。"
         return
-    if not api_key or not api_key.strip():
-        yield [], "请填写 API Key。"
-        return
-    if not model_id or not model_id.strip():
-        yield [], "请填写模型 ID。"
+    image_model_provider, _selected_base_url, selected_model_id, selected_api_key = resolve_selected_image_config(
+        image_model_provider,
+        base_url,
+        model_id,
+        api_key,
+        seedream_base_url,
+        seedream_model_id,
+        seedream_api_key,
+    )
+    validation_error = validate_selected_image_config(image_model_provider, selected_model_id, selected_api_key)
+    if validation_error:
+        yield [], validation_error
         return
 
     retry_count, retry_delay = normalize_retry_settings(retry_count, retry_delay)
     image_request_delay = normalize_image_request_delay(image_request_delay)
     quality = normalize_quality(quality)
+    seedream_model_id = normalize_seedream_model_id(seedream_model_id)
+    seedream_response_format = normalize_seedream_response_format(seedream_response_format)
+    seedream_output_format = normalize_seedream_output_format(seedream_output_format)
+    seedream_watermark = normalize_seedream_watermark(seedream_watermark)
     input_fidelity = input_fidelity if input_fidelity in INPUT_FIDELITY_PRESETS else "high"
 
     persist_config(
@@ -1923,32 +2294,46 @@ def generate_image_edit(
             "retry_count": int(retry_count),
             "retry_delay": float(retry_delay),
             "image_request_delay": image_request_delay,
+            "image_model_provider": image_model_provider,
             "aspect_ratio": aspect_ratio,
             "resolution": resolution,
             "base_url": base_url,
             "model_id": model_id,
             "quality": quality,
             "api_key": api_key,
+            "seedream_base_url": seedream_base_url,
+            "seedream_model_id": seedream_model_id,
+            "seedream_api_key": seedream_api_key,
+            "seedream_response_format": seedream_response_format,
+            "seedream_output_format": seedream_output_format,
+            "seedream_watermark": seedream_watermark,
             "edit_input_fidelity": input_fidelity,
         },
     )
 
     yield from generate_image_edits_concurrently(
-        prompt,
-        input_images,
-        save_dir,
-        image_count,
-        aspect_ratio,
-        resolution,
-        base_url,
-        model_id,
-        quality,
-        api_key,
-        input_fidelity,
-        concurrency,
-        retry_count,
-        retry_delay,
-        image_request_delay,
+        prompt=prompt,
+        input_images=input_images,
+        save_dir=save_dir,
+        image_count=image_count,
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        image_model_provider=image_model_provider,
+        base_url=base_url,
+        model_id=model_id,
+        quality=quality,
+        api_key=api_key,
+        seedream_base_url=seedream_base_url,
+        seedream_model_id=seedream_model_id,
+        seedream_api_key=seedream_api_key,
+        seedream_response_format=seedream_response_format,
+        seedream_output_format=seedream_output_format,
+        seedream_watermark=seedream_watermark,
+        input_fidelity=input_fidelity,
+        concurrency=concurrency,
+        retry_count=retry_count,
+        retry_delay=retry_delay,
+        image_request_delay=image_request_delay,
     )
 
 
@@ -1959,12 +2344,19 @@ def generate_random_image(
     retry_count,
     retry_delay,
     image_request_delay,
+    image_model_provider,
     aspect_ratio,
     resolution,
     base_url,
     model_id,
     quality,
     api_key,
+    seedream_base_url,
+    seedream_model_id,
+    seedream_api_key,
+    seedream_response_format,
+    seedream_output_format,
+    seedream_watermark,
     random_base_url,
     random_model_id,
     random_api_key,
@@ -1973,16 +2365,27 @@ def generate_random_image(
     random_preference,
 ):
     reset_stop_flag("random")
-    if not api_key or not api_key.strip():
-        yield "", [], "请填写图片生成 API Key。"
-        return
-    if not model_id or not model_id.strip():
-        yield "", [], "请填写图片生成模型 ID。"
+    image_model_provider, _selected_base_url, selected_model_id, selected_api_key = resolve_selected_image_config(
+        image_model_provider,
+        base_url,
+        model_id,
+        api_key,
+        seedream_base_url,
+        seedream_model_id,
+        seedream_api_key,
+    )
+    validation_error = validate_selected_image_config(image_model_provider, selected_model_id, selected_api_key)
+    if validation_error:
+        yield "", [], validation_error
         return
 
     retry_count, retry_delay = normalize_retry_settings(retry_count, retry_delay)
     image_request_delay = normalize_image_request_delay(image_request_delay)
     quality = normalize_quality(quality)
+    seedream_model_id = normalize_seedream_model_id(seedream_model_id)
+    seedream_response_format = normalize_seedream_response_format(seedream_response_format)
+    seedream_output_format = normalize_seedream_output_format(seedream_output_format)
+    seedream_watermark = normalize_seedream_watermark(seedream_watermark)
     random_protocol = normalize_protocol(random_protocol)
     random_reasoning_effort = normalize_reasoning_effort(random_reasoning_effort)
     prompt_started_at = time.perf_counter()
@@ -1994,12 +2397,19 @@ def generate_random_image(
             "retry_count": int(retry_count),
             "retry_delay": float(retry_delay),
             "image_request_delay": image_request_delay,
+            "image_model_provider": image_model_provider,
             "aspect_ratio": aspect_ratio,
             "resolution": resolution,
             "base_url": base_url,
             "model_id": model_id,
             "quality": quality,
             "api_key": api_key,
+            "seedream_base_url": seedream_base_url,
+            "seedream_model_id": seedream_model_id,
+            "seedream_api_key": seedream_api_key,
+            "seedream_response_format": seedream_response_format,
+            "seedream_output_format": seedream_output_format,
+            "seedream_watermark": seedream_watermark,
             "random_base_url": random_base_url,
             "random_model_id": random_model_id,
             "random_api_key": random_api_key,
@@ -2037,20 +2447,27 @@ def generate_random_image(
     )
 
     for gallery_items, status in generate_images_from_prompt(
-        random_prompt,
-        save_dir,
-        image_count,
-        aspect_ratio,
-        resolution,
-        base_url,
-        model_id,
-        quality,
-        api_key,
-        concurrency,
-        retry_count,
-        retry_delay,
-        image_request_delay,
-        "random",
+        prompt=random_prompt,
+        save_dir=save_dir,
+        image_count=image_count,
+        aspect_ratio=aspect_ratio,
+        resolution=resolution,
+        image_model_provider=image_model_provider,
+        base_url=base_url,
+        model_id=model_id,
+        quality=quality,
+        api_key=api_key,
+        seedream_base_url=seedream_base_url,
+        seedream_model_id=seedream_model_id,
+        seedream_api_key=seedream_api_key,
+        seedream_response_format=seedream_response_format,
+        seedream_output_format=seedream_output_format,
+        seedream_watermark=seedream_watermark,
+        concurrency=concurrency,
+        retry_count=retry_count,
+        retry_delay=retry_delay,
+        image_request_delay=image_request_delay,
+        stop_mode="random",
     ):
         yield random_prompt, gallery_items, status
 
@@ -2063,12 +2480,19 @@ def generate_creative_images(
     retry_count,
     retry_delay,
     image_request_delay,
+    image_model_provider,
     aspect_ratio,
     resolution,
     image_base_url,
     image_model_id,
     quality,
     image_api_key,
+    seedream_base_url,
+    seedream_model_id,
+    seedream_api_key,
+    seedream_response_format,
+    seedream_output_format,
+    seedream_watermark,
     random_base_url,
     random_model_id,
     random_api_key,
@@ -2077,11 +2501,18 @@ def generate_creative_images(
     random_preference,
 ):
     reset_stop_flag("creative")
-    if not image_api_key or not image_api_key.strip():
-        yield "", [], "请填写图片生成 API Key。"
-        return
-    if not image_model_id or not image_model_id.strip():
-        yield "", [], "请填写图片生成模型 ID。"
+    image_model_provider, _selected_base_url, selected_model_id, selected_api_key = resolve_selected_image_config(
+        image_model_provider,
+        image_base_url,
+        image_model_id,
+        image_api_key,
+        seedream_base_url,
+        seedream_model_id,
+        seedream_api_key,
+    )
+    validation_error = validate_selected_image_config(image_model_provider, selected_model_id, selected_api_key)
+    if validation_error:
+        yield "", [], validation_error
         return
 
     creative_count = int(creative_count)
@@ -2096,8 +2527,12 @@ def generate_creative_images(
     save_dir = get_save_dir(save_dir)
     os.makedirs(save_dir, exist_ok=True)
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    request_size = resolve_size(aspect_ratio, resolution)
+    request_size = resolve_image_request_size(image_model_provider, aspect_ratio, resolution, selected_model_id)
     quality = normalize_quality(quality)
+    seedream_model_id = normalize_seedream_model_id(seedream_model_id)
+    seedream_response_format = normalize_seedream_response_format(seedream_response_format)
+    seedream_output_format = normalize_seedream_output_format(seedream_output_format)
+    seedream_watermark = normalize_seedream_watermark(seedream_watermark)
     random_protocol = normalize_protocol(random_protocol)
     random_reasoning_effort = normalize_reasoning_effort(random_reasoning_effort)
 
@@ -2110,12 +2545,19 @@ def generate_creative_images(
             "retry_count": retry_count,
             "retry_delay": retry_delay,
             "image_request_delay": image_request_delay,
+            "image_model_provider": image_model_provider,
             "aspect_ratio": aspect_ratio,
             "resolution": resolution,
             "base_url": image_base_url,
             "model_id": image_model_id,
             "quality": quality,
             "api_key": image_api_key,
+            "seedream_base_url": seedream_base_url,
+            "seedream_model_id": seedream_model_id,
+            "seedream_api_key": seedream_api_key,
+            "seedream_response_format": seedream_response_format,
+            "seedream_output_format": seedream_output_format,
+            "seedream_watermark": seedream_watermark,
             "random_base_url": random_base_url,
             "random_model_id": random_model_id,
             "random_api_key": random_api_key,
@@ -2128,7 +2570,7 @@ def generate_creative_images(
     retry_events = []
     failed_prompts = []
     failed_images = []
-    yield "", [], f"正在生成 {creative_count} 段随机提示词并流水线出图；文本并发 {text_concurrency}，图片并发 {image_concurrency}；生图并发间隔 {image_request_delay:g} 秒；请求尺寸 {request_size}；品质 {quality}。"
+    yield "", [], f"正在生成 {creative_count} 段随机提示词并流水线出图；图片模型 {image_model_provider}；文本并发 {text_concurrency}，图片并发 {image_concurrency}；生图并发间隔 {image_request_delay:g} 秒；请求尺寸 {request_size}；品质 {quality}。"
 
     def prompt_worker(index):
         events = []
@@ -2159,10 +2601,17 @@ def generate_creative_images(
             save_dir,
             aspect_ratio,
             resolution,
+            image_model_provider,
             image_base_url,
             image_model_id,
             quality,
             image_api_key,
+            seedream_base_url,
+                seedream_model_id,
+            seedream_api_key,
+            seedream_response_format,
+            seedream_output_format,
+            seedream_watermark,
             f"{timestamp}_creative{index:02d}",
             retry_count,
             retry_delay,
@@ -2264,7 +2713,7 @@ def generate_creative_images(
     yield (
         prompt_text,
         build_gallery_items(saved_paths),
-        f"创意模式完成：共生成 {len(prompts)} 段提示词，保存 {len(saved_paths)} 张图片，提示词失败 {len(failed_prompts)} 段，图片失败 {len(failed_images)} 张；{format_generation_stats(image_records, creative_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}",
+        f"创意模式完成：图片模型 {image_model_provider}；共生成 {len(prompts)} 段提示词，保存 {len(saved_paths)} 张图片，提示词失败 {len(failed_prompts)} 段，图片失败 {len(failed_images)} 张；{format_generation_stats(image_records, creative_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}",
     )
 
 
@@ -2275,12 +2724,19 @@ def generate_iterative_image(
     iteration_count,
     retry_count,
     retry_delay,
+    image_model_provider,
     aspect_ratio,
     resolution,
     image_base_url,
     image_model_id,
     quality,
     image_api_key,
+    seedream_base_url,
+    seedream_model_id,
+    seedream_api_key,
+    seedream_response_format,
+    seedream_output_format,
+    seedream_watermark,
     random_base_url,
     random_model_id,
     random_api_key,
@@ -2294,11 +2750,18 @@ def generate_iterative_image(
     iteration_reasoning_effort,
 ):
     reset_stop_flag("iterative")
-    if not image_api_key or not image_api_key.strip():
-        yield "", [], "请填写图片生成 API Key。"
-        return
-    if not image_model_id or not image_model_id.strip():
-        yield "", [], "请填写图片生成模型 ID。"
+    image_model_provider, _selected_base_url, selected_model_id, selected_api_key = resolve_selected_image_config(
+        image_model_provider,
+        image_base_url,
+        image_model_id,
+        image_api_key,
+        seedream_base_url,
+        seedream_model_id,
+        seedream_api_key,
+    )
+    validation_error = validate_selected_image_config(image_model_provider, selected_model_id, selected_api_key)
+    if validation_error:
+        yield "", [], validation_error
         return
 
     iteration_prompt_source = normalize_iteration_prompt_source(iteration_prompt_source)
@@ -2306,6 +2769,10 @@ def generate_iterative_image(
     iteration_count = int(iteration_count)
     retry_count, retry_delay = normalize_retry_settings(retry_count, retry_delay)
     quality = normalize_quality(quality)
+    seedream_model_id = normalize_seedream_model_id(seedream_model_id)
+    seedream_response_format = normalize_seedream_response_format(seedream_response_format)
+    seedream_output_format = normalize_seedream_output_format(seedream_output_format)
+    seedream_watermark = normalize_seedream_watermark(seedream_watermark)
     random_protocol = normalize_protocol(random_protocol)
     iteration_protocol = normalize_protocol(iteration_protocol)
     random_reasoning_effort = normalize_reasoning_effort(random_reasoning_effort)
@@ -2318,7 +2785,7 @@ def generate_iterative_image(
     saved_paths = []
     image_records = []
     prompt_history = []
-    request_size = resolve_size(aspect_ratio, resolution)
+    request_size = resolve_image_request_size(image_model_provider, aspect_ratio, resolution, selected_model_id)
 
     persist_config(
         {
@@ -2326,12 +2793,19 @@ def generate_iterative_image(
             "iteration_count": iteration_count,
             "retry_count": retry_count,
             "retry_delay": retry_delay,
+            "image_model_provider": image_model_provider,
             "aspect_ratio": aspect_ratio,
             "resolution": resolution,
             "base_url": image_base_url,
             "model_id": image_model_id,
             "quality": quality,
             "api_key": image_api_key,
+            "seedream_base_url": seedream_base_url,
+            "seedream_model_id": seedream_model_id,
+            "seedream_api_key": seedream_api_key,
+            "seedream_response_format": seedream_response_format,
+            "seedream_output_format": seedream_output_format,
+            "seedream_watermark": seedream_watermark,
             "random_base_url": random_base_url,
             "random_model_id": random_model_id,
             "random_api_key": random_api_key,
@@ -2395,10 +2869,17 @@ def generate_iterative_image(
                 save_dir,
                 aspect_ratio,
                 resolution,
+                image_model_provider,
                 image_base_url,
                 image_model_id,
                 quality,
                 image_api_key,
+        seedream_base_url,
+        seedream_model_id,
+                seedream_api_key,
+                seedream_response_format,
+                seedream_output_format,
+                seedream_watermark,
                 f"{timestamp}_round{round_index:02d}",
                 retry_count,
                 retry_delay,
@@ -2476,7 +2957,7 @@ def generate_iterative_image(
     yield (
         "\n\n".join(prompt_history),
         build_gallery_items(saved_paths),
-        f"自我迭代完成：共生成 {len(saved_paths)} 张，迭代 {iteration_count} 轮；{format_generation_stats(image_records, iteration_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}",
+        f"自我迭代完成：图片模型 {image_model_provider}；共生成 {len(saved_paths)} 张，迭代 {iteration_count} 轮；{format_generation_stats(image_records, iteration_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}",
     )
 
 
@@ -2486,6 +2967,12 @@ def save_settings(
     model_id,
     quality,
     api_key,
+    seedream_base_url,
+    seedream_model_id,
+    seedream_api_key,
+    seedream_response_format,
+    seedream_output_format,
+    seedream_watermark,
     random_base_url,
     random_model_id,
     random_api_key,
@@ -2507,10 +2994,31 @@ def save_settings(
     retry_count, retry_delay = normalize_retry_settings(retry_count, retry_delay)
     image_request_delay = normalize_image_request_delay(image_request_delay)
     quality = normalize_quality(quality)
+    seedream_model_id = normalize_seedream_model_id(seedream_model_id)
+    seedream_response_format = normalize_seedream_response_format(seedream_response_format)
+    seedream_output_format = normalize_seedream_output_format(seedream_output_format)
+    seedream_watermark = normalize_seedream_watermark(seedream_watermark)
     random_protocol = normalize_protocol(random_protocol)
     iteration_protocol = normalize_protocol(iteration_protocol)
     random_reasoning_effort = normalize_reasoning_effort(random_reasoning_effort)
     iteration_reasoning_effort = normalize_reasoning_effort(iteration_reasoning_effort)
+
+    save_env_config(
+        {
+            "base_url": base_url,
+            "model_id": model_id,
+            "api_key": api_key,
+            "seedream_base_url": seedream_base_url,
+            "seedream_model_id": seedream_model_id,
+            "seedream_api_key": seedream_api_key,
+            "random_base_url": random_base_url,
+            "random_model_id": random_model_id,
+            "random_api_key": random_api_key,
+            "iteration_base_url": iteration_base_url,
+            "iteration_model_id": iteration_model_id,
+            "iteration_api_key": iteration_api_key,
+        }
+    )
 
     persist_config(
         {
@@ -2519,6 +3027,12 @@ def save_settings(
             "model_id": model_id,
             "quality": quality,
             "api_key": api_key,
+            "seedream_base_url": seedream_base_url,
+            "seedream_model_id": seedream_model_id,
+            "seedream_api_key": seedream_api_key,
+            "seedream_response_format": seedream_response_format,
+            "seedream_output_format": seedream_output_format,
+            "seedream_watermark": seedream_watermark,
             "random_base_url": random_base_url,
             "random_model_id": random_model_id,
             "random_api_key": random_api_key,
@@ -2543,17 +3057,20 @@ def save_settings(
 
 def load_ui_state():
     latest_config = normalize_config(load_config(DEFAULT_CONFIG))
+    latest_config.update(env_config_values())
     CONFIG.clear()
     CONFIG.update(latest_config)
     return [
         latest_config["prompt"],
         latest_config["image_count"],
         latest_config["concurrency"],
+        latest_config["image_model_provider"],
         latest_config["aspect_ratio"],
         latest_config["resolution"],
         latest_config["prompt"],
         latest_config["image_count"],
         latest_config["concurrency"],
+        latest_config["image_model_provider"],
         latest_config["aspect_ratio"],
         latest_config["resolution"],
         latest_config["edit_input_fidelity"],
@@ -2561,12 +3078,14 @@ def load_ui_state():
         latest_config["prompt"],
         latest_config["image_count"],
         latest_config["concurrency"],
+        latest_config["image_model_provider"],
         latest_config["aspect_ratio"],
         latest_config["resolution"],
         latest_config["random_preference"],
         latest_config["creative_count"],
         latest_config["text_concurrency"],
         latest_config["image_concurrency"],
+        latest_config["image_model_provider"],
         latest_config["aspect_ratio"],
         latest_config["resolution"],
         latest_config["random_preference"],
@@ -2574,6 +3093,7 @@ def load_ui_state():
         latest_config["iteration_custom_prompt"],
         latest_config["prompt"],
         latest_config["iteration_count"],
+        latest_config["image_model_provider"],
         latest_config["aspect_ratio"],
         latest_config["resolution"],
         latest_config["save_dir"],
@@ -2581,6 +3101,12 @@ def load_ui_state():
         latest_config["model_id"],
         latest_config["quality"],
         latest_config["api_key"],
+        latest_config["seedream_base_url"],
+        latest_config["seedream_model_id"],
+        latest_config["seedream_response_format"],
+        latest_config["seedream_output_format"],
+        latest_config["seedream_watermark"],
+        latest_config["seedream_api_key"],
         latest_config["random_base_url"],
         latest_config["random_model_id"],
         latest_config["random_protocol"],
@@ -2812,6 +3338,11 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                         )
 
                         with gr.Row():
+                            image_model_provider_input = gr.Dropdown(
+                                label="模型选择",
+                                choices=IMAGE_MODEL_PRESETS,
+                                value=CONFIG["image_model_provider"],
+                            )
                             image_count_input = gr.Slider(
                                 label="生成数量",
                                 minimum=1,
@@ -2879,6 +3410,11 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                         )
 
                         with gr.Row():
+                            edit_image_model_provider_input = gr.Dropdown(
+                                label="模型选择",
+                                choices=IMAGE_MODEL_PRESETS,
+                                value=CONFIG["image_model_provider"],
+                            )
                             edit_image_count_input = gr.Slider(
                                 label="生成数量",
                                 minimum=1,
@@ -2953,6 +3489,11 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                         )
 
                         with gr.Row():
+                            random_image_model_provider_input = gr.Dropdown(
+                                label="模型选择",
+                                choices=IMAGE_MODEL_PRESETS,
+                                value=CONFIG["image_model_provider"],
+                            )
                             random_image_count_input = gr.Slider(
                                 label="生成数量",
                                 minimum=1,
@@ -3020,6 +3561,11 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                         )
 
                         with gr.Row():
+                            creative_image_model_provider_input = gr.Dropdown(
+                                label="模型选择",
+                                choices=IMAGE_MODEL_PRESETS,
+                                value=CONFIG["image_model_provider"],
+                            )
                             creative_count_input = gr.Slider(
                                 label="生成张数",
                                 minimum=1,
@@ -3108,6 +3654,11 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                         )
 
                         with gr.Row():
+                            iterative_image_model_provider_input = gr.Dropdown(
+                                label="模型选择",
+                                choices=IMAGE_MODEL_PRESETS,
+                                value=CONFIG["image_model_provider"],
+                            )
                             iteration_count_input = gr.Slider(
                                 label="迭代次数",
                                 minimum=1,
@@ -3204,6 +3755,38 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                             settings_api_key_input = gr.Textbox(
                                 label="API Key",
                                 value=CONFIG["api_key"],
+                                type="password",
+                            )
+
+                        with gr.Accordion("Seedream 接口", open=False):
+                            gr.HTML('<div class="mode-note">用途：调用火山方舟豆包 Seedream 图片生成接口。示例：https://ark.cn-beijing.volces.com/api/v3 或完整 /images/generations 地址；在各模式中选择“豆包 Seedream”后生效。</div>')
+                            settings_seedream_base_url_input = gr.Textbox(label="API 地址", value=CONFIG["seedream_base_url"])
+                            settings_seedream_model_id_input = gr.Dropdown(
+                                label="模型 ID",
+                                choices=SEEDREAM_MODEL_ID_PRESETS,
+                                value=normalize_seedream_model_id(CONFIG["seedream_model_id"]),
+                                allow_custom_value=True,
+                                info="根据模型 ID 自动识别 Pro/Lite；Lite 兼容 doubao-seedream-5-0-260128。",
+                            )
+                            with gr.Row():
+                                settings_seedream_response_format_input = gr.Dropdown(
+                                    label="返回格式",
+                                    choices=SEEDREAM_RESPONSE_FORMAT_PRESETS,
+                                    value=CONFIG["seedream_response_format"],
+                                )
+                                settings_seedream_output_format_input = gr.Dropdown(
+                                    label="输出格式",
+                                    choices=SEEDREAM_OUTPUT_FORMAT_PRESETS,
+                                    value=CONFIG["seedream_output_format"],
+                                )
+                                settings_seedream_watermark_input = gr.Dropdown(
+                                    label="水印",
+                                    choices=SEEDREAM_WATERMARK_PRESETS,
+                                    value=CONFIG["seedream_watermark"],
+                                )
+                            settings_seedream_api_key_input = gr.Textbox(
+                                label="API Key",
+                                value=CONFIG["seedream_api_key"],
                                 type="password",
                             )
 
@@ -3314,12 +3897,19 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
             settings_retry_count_input,
             settings_retry_delay_input,
             settings_image_request_delay_input,
+            image_model_provider_input,
             aspect_ratio_input,
             resolution_input,
             settings_base_url_input,
             settings_model_id_input,
             settings_quality_input,
             settings_api_key_input,
+            settings_seedream_base_url_input,
+            settings_seedream_model_id_input,
+            settings_seedream_api_key_input,
+            settings_seedream_response_format_input,
+            settings_seedream_output_format_input,
+            settings_seedream_watermark_input,
         ],
         outputs=[gallery_output, status_output],
     )
@@ -3341,12 +3931,19 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
             settings_retry_count_input,
             settings_retry_delay_input,
             settings_image_request_delay_input,
+            edit_image_model_provider_input,
             edit_aspect_ratio_input,
             edit_resolution_input,
             settings_base_url_input,
             settings_model_id_input,
             settings_quality_input,
             settings_api_key_input,
+            settings_seedream_base_url_input,
+            settings_seedream_model_id_input,
+            settings_seedream_api_key_input,
+            settings_seedream_response_format_input,
+            settings_seedream_output_format_input,
+            settings_seedream_watermark_input,
             edit_input_fidelity_input,
         ],
         outputs=[edit_gallery_output, edit_status_output],
@@ -3367,12 +3964,19 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
             settings_retry_count_input,
             settings_retry_delay_input,
             settings_image_request_delay_input,
+            random_image_model_provider_input,
             random_aspect_ratio_input,
             random_resolution_input,
             settings_base_url_input,
             settings_model_id_input,
             settings_quality_input,
             settings_api_key_input,
+            settings_seedream_base_url_input,
+            settings_seedream_model_id_input,
+            settings_seedream_api_key_input,
+            settings_seedream_response_format_input,
+            settings_seedream_output_format_input,
+            settings_seedream_watermark_input,
             settings_random_base_url_input,
             settings_random_model_id_input,
             settings_random_api_key_input,
@@ -3399,12 +4003,19 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
             settings_retry_count_input,
             settings_retry_delay_input,
             settings_image_request_delay_input,
+            creative_image_model_provider_input,
             creative_aspect_ratio_input,
             creative_resolution_input,
             settings_base_url_input,
             settings_model_id_input,
             settings_quality_input,
             settings_api_key_input,
+            settings_seedream_base_url_input,
+            settings_seedream_model_id_input,
+            settings_seedream_api_key_input,
+            settings_seedream_response_format_input,
+            settings_seedream_output_format_input,
+            settings_seedream_watermark_input,
             settings_random_base_url_input,
             settings_random_model_id_input,
             settings_random_api_key_input,
@@ -3430,12 +4041,19 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
             iteration_count_input,
             settings_retry_count_input,
             settings_retry_delay_input,
+            iterative_image_model_provider_input,
             iterative_aspect_ratio_input,
             iterative_resolution_input,
             settings_base_url_input,
             settings_model_id_input,
             settings_quality_input,
             settings_api_key_input,
+            settings_seedream_base_url_input,
+            settings_seedream_model_id_input,
+            settings_seedream_api_key_input,
+            settings_seedream_response_format_input,
+            settings_seedream_output_format_input,
+            settings_seedream_watermark_input,
             settings_random_base_url_input,
             settings_random_model_id_input,
             settings_random_api_key_input,
@@ -3484,11 +4102,13 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
         prompt_input,
         image_count_input,
         concurrency_input,
+        image_model_provider_input,
         aspect_ratio_input,
         resolution_input,
         edit_prompt_input,
         edit_image_count_input,
         edit_concurrency_input,
+        edit_image_model_provider_input,
         edit_aspect_ratio_input,
         edit_resolution_input,
         edit_input_fidelity_input,
@@ -3496,12 +4116,14 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
         random_prompt_output,
         random_image_count_input,
         random_concurrency_input,
+        random_image_model_provider_input,
         random_aspect_ratio_input,
         random_resolution_input,
         creative_preference_input,
         creative_count_input,
         creative_text_concurrency_input,
         creative_image_concurrency_input,
+        creative_image_model_provider_input,
         creative_aspect_ratio_input,
         creative_resolution_input,
         iterative_preference_input,
@@ -3509,6 +4131,7 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
         iterative_custom_prompt_input,
         iterative_prompt_output,
         iteration_count_input,
+        iterative_image_model_provider_input,
         iterative_aspect_ratio_input,
         iterative_resolution_input,
         settings_save_dir_input,
@@ -3516,6 +4139,12 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
         settings_model_id_input,
         settings_quality_input,
         settings_api_key_input,
+        settings_seedream_base_url_input,
+        settings_seedream_model_id_input,
+        settings_seedream_response_format_input,
+        settings_seedream_output_format_input,
+        settings_seedream_watermark_input,
+        settings_seedream_api_key_input,
         settings_random_base_url_input,
         settings_random_model_id_input,
         settings_random_protocol_input,
@@ -3544,6 +4173,12 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
             settings_model_id_input,
             settings_quality_input,
             settings_api_key_input,
+            settings_seedream_base_url_input,
+            settings_seedream_model_id_input,
+            settings_seedream_api_key_input,
+            settings_seedream_response_format_input,
+            settings_seedream_output_format_input,
+            settings_seedream_watermark_input,
             settings_random_base_url_input,
             settings_random_model_id_input,
             settings_random_api_key_input,
@@ -3574,3 +4209,4 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
 
 if __name__ == "__main__":
     app.launch(theme=theme, css=css, js=js, inbrowser=True)
+

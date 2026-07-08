@@ -19,6 +19,7 @@
 - **自我迭代模式**：生成图片后调用多模态模型进行视觉评估，自动返回优化提示词进入下一轮。
 - **提示词反推**：上传图片或填写本地图片路径，由多模态模型反推出中文图像提示词。
 - **统一设置页**：集中管理图片生成接口、文本模型接口、多模态模型接口、重试策略、保存目录和提示词模板。
+- **Seedream 支持**：可在设置页单独填写豆包 Seedream 接口，并在出图模式里选择 GPT Image 或豆包 Seedream。
 - **生图并发间隔**：为文生图和图生图的并发请求增加启动间隔，降低中转站限流风险。
 - **协议适配**：支持 OpenAI Chat、OpenAI Responses、Gemini 原生协议、Claude Messages。
 - **思考档位**：文本模型和多模态模型可以分别设置思考强度，并自动映射到不同厂商的参数。
@@ -169,7 +170,7 @@ pip install -r requirements.txt
 
 ### 图片生成接口
 
-用于实际生成图片和图片编辑。通常需要 OpenAI Images 兼容接口。
+用于实际生成图片和图片编辑。默认使用 OpenAI Images 兼容接口。
 
 建议输入格式：
 
@@ -188,6 +189,19 @@ https://example.com/v1/images/generations
 ```text
 https://example.com/v1/images/edits
 ```
+
+### Seedream 接口
+
+用于调用火山方舟豆包 Seedream 图片生成接口。进入“设置 -> Seedream 接口”填写：
+
+- API 地址，例如 `https://ark.cn-beijing.volces.com/api/v3`
+- 模型 ID，例如 `doubao-seedream-5-0-pro-260628` 或 `doubao-seedream-5-0-lite-260128`
+- API Key
+- 返回格式、输出格式和水印选项
+
+在手动、图生图、随机、创意和自我迭代模式中，把“模型选择”切换为“豆包 Seedream”后生效。
+
+Seedream 的尺寸规则和 GPT Image 独立处理：程序会根据模型 ID 自动识别 Pro/Lite。`doubao-seedream-5-0-pro-260628` 使用 `1K/2K` 档位；`doubao-seedream-5-0-lite-260128` 和 `doubao-seedream-5-0-260128` 视为同一个 Lite 模型，使用 `2K/3K/4K` 档位；图片比例会写入提示词，让模型按所选比例生成。
 
 ### 文本模型接口
 
