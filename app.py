@@ -1767,6 +1767,7 @@ def generate_one_image_edit(
 
     def request_edit():
         if image_model_provider == "豆包 Seedream":
+            # Seedream does not support OpenAI's input_fidelity edit parameter.
             return parse_image_items(
                 post_json(
                     resolve_seedream_api_url(active_base_url),
@@ -2962,7 +2963,7 @@ def generate_iterative_image(
     def status_text(prefix=""):
         running = sum(1 for status in task_statuses.values() if status not in ("完成", "失败", "已停止"))
         lines = [
-            f"自我迭代批量运行：生成数量 {iteration_batch_count}，迭代 {iteration_count} 轮；文本并发 {iteration_text_concurrency}，图片并发 {iteration_image_concurrency}，生图并发间隔 {image_request_delay:g} 秒。",
+            f"自我迭代批量运行：生成数量 {iteration_batch_count}，迭代 {iteration_count} 轮；初始提示词并发 {iteration_text_concurrency}，图片并发 {iteration_image_concurrency}，生图并发间隔 {image_request_delay:g} 秒。",
             f"最终成品 {len(final_records)}/{iteration_batch_count} 张；过程图 {len(process_records)} 张；运行中 {running} 组；失败 {len(failed_tasks)} 组。",
         ]
         if prefix:
@@ -3046,35 +3047,34 @@ def generate_iterative_image(
             )
 
     def optimize_prompt_for_task(task_index, round_index, current_prompt, image_path):
-        with text_gate:
-            if should_stop("iterative"):
-                raise RuntimeError("任务已停止。")
-            vision_protocol, vision_url = resolve_vision_protocol(
-                iteration_base_url,
-                iteration_model_id,
-                iteration_protocol,
-            )
-            preview_image = prepare_vision_image(image_path)
-            upload_size_label = f"{format_bytes(preview_image['original_size'])} -> {format_bytes(preview_image['compressed_size'])}"
-            put_event(
-                "status",
-                task_index,
-                status=f"正在评估第 {round_index} 轮；协议 {format_protocol_label(vision_protocol)}；上传 {upload_size_label}，{preview_image['dimensions']}",
-            )
-            return optimize_prompt_with_image(
-                current_prompt,
-                image_path,
-                iteration_base_url,
-                iteration_model_id,
-                iteration_api_key,
-                iteration_protocol,
-                retry_count,
-                retry_delay,
-                reasoning_effort=iteration_reasoning_effort,
-                creation_theme=random_preference if iteration_prompt_source == "自定义提示词" else "",
-                user_initial_direction=random_preference if iteration_prompt_source == "随机提示词" else "",
-                prepared_vision_image=preview_image,
-            )
+        if should_stop("iterative"):
+            raise RuntimeError("任务已停止。")
+        vision_protocol, vision_url = resolve_vision_protocol(
+            iteration_base_url,
+            iteration_model_id,
+            iteration_protocol,
+        )
+        preview_image = prepare_vision_image(image_path)
+        upload_size_label = f"{format_bytes(preview_image['original_size'])} -> {format_bytes(preview_image['compressed_size'])}"
+        put_event(
+            "status",
+            task_index,
+            status=f"正在评估第 {round_index} 轮；协议 {format_protocol_label(vision_protocol)}；上传 {upload_size_label}，{preview_image['dimensions']}",
+        )
+        return optimize_prompt_with_image(
+            current_prompt,
+            image_path,
+            iteration_base_url,
+            iteration_model_id,
+            iteration_api_key,
+            iteration_protocol,
+            retry_count,
+            retry_delay,
+            reasoning_effort=iteration_reasoning_effort,
+            creation_theme=random_preference if iteration_prompt_source == "自定义提示词" else "",
+            user_initial_direction=random_preference if iteration_prompt_source == "随机提示词" else "",
+            prepared_vision_image=preview_image,
+        )
 
     def iteration_worker(task_index):
         current_prompt = generate_initial_prompt_for_task(task_index)
@@ -3919,7 +3919,7 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                                 min_width=220,
                             )
                             iteration_text_concurrency_input = gr.Slider(
-                                label="文本并发数量",
+                                label="初始提示词并发",
                                 minimum=1,
                                 maximum=10,
                                 value=CONFIG["iteration_text_concurrency"],
