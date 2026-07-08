@@ -256,13 +256,17 @@ Seedream 的尺寸规则和 GPT Image 独立处理：程序会根据模型 ID �
 
 ## 配置文件
 
-首次保存设置后，程序会生成：
+程序首次启动或保存设置后，会使用这些本地文件：
 
 ```text
 app_config.json
+.env
+prompt_templates.py
 ```
 
-`app_config.json` 用于保存页面状态、保存目录、重试设置和提示词模板。接口地址、模型 ID 和 API Key 会保存到同目录的 `.env`，避免混在运行配置里。
+`app_config.json` 用于保存页面状态、保存目录和重试设置。接口地址、模型 ID 和 API Key 会保存到同目录的 `.env`。真实提示词模板保存在 `prompt_templates.py`。
+
+如果 `.env` 不存在，程序会自动创建一份空配置。如果 `prompt_templates.py` 不存在，程序会从 `prompt_templates_Default.py` 复制一份默认模板。这样公开版本可以提交默认模板，个人版本只需要保留自己的 `.env` 和 `prompt_templates.py`，这两个文件默认不会进入 Git。
 
 提示词模板支持变量，例如 `{{date}}`、`{{time}}`、`{{datetime}}`、`{{preference}}`。自我迭代的视觉提示词还支持 `{{current_prompt}}`、`{{creation_theme}}`、`{{user_initial_direction}}`、`{{image}}`。
 
@@ -277,6 +281,8 @@ app_config.example.json
 ```text
 app.py                    主程序
 config_store.py           配置读写工具
+env_loader.py             本地 .env 和提示词模板初始化
+prompt_templates_Default.py 公开默认提示词模板
 requirements.txt          Python 依赖
 DEPENDENCIES.md           依赖说明
 app_config.example.json   配置示例

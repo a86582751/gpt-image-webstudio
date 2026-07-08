@@ -11,14 +11,15 @@ from PIL import Image
 from urllib.parse import urlparse
 from config_store import load_config, save_config
 from env_loader import load_local_env, update_local_env
+
+load_local_env()
+
 from prompt_templates import (
     ITERATION_OPTIMIZER_PROMPT,
     RANDOM_SYSTEM_PROMPT,
     RANDOM_USER_PROMPT,
     REVERSE_PROMPT,
 )
-
-load_local_env()
 
 BASE_URL = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
 API_KEY = os.getenv("OPENAI_API_KEY", "")

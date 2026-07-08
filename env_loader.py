@@ -1,8 +1,40 @@
 import os
+import shutil
 from pathlib import Path
 
 
+ENV_TEMPLATE = """OPENAI_BASE_URL=
+OPENAI_API_KEY=
+OPENAI_IMAGE_MODEL=gpt-image-2
+
+SEEDREAM_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+SEEDREAM_API_KEY=
+SEEDREAM_MODEL=doubao-seedream-5-0-pro-260628
+
+RANDOM_PROMPT_BASE_URL=
+RANDOM_PROMPT_API_KEY=
+RANDOM_PROMPT_MODEL=
+
+ITERATION_BASE_URL=
+ITERATION_API_KEY=
+ITERATION_MODEL=
+"""
+
+
+def ensure_local_runtime_files():
+    base_dir = Path(__file__).resolve().parent
+    env_path = base_dir / ".env"
+    if not env_path.exists():
+        env_path.write_text(ENV_TEMPLATE, encoding="utf-8")
+
+    prompt_path = base_dir / "prompt_templates.py"
+    default_prompt_path = base_dir / "prompt_templates_Default.py"
+    if not prompt_path.exists() and default_prompt_path.exists():
+        shutil.copyfile(default_prompt_path, prompt_path)
+
+
 def load_local_env(filename=".env"):
+    ensure_local_runtime_files()
     env_path = Path(__file__).with_name(filename)
     if not env_path.exists():
         return

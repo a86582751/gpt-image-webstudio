@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 app_config.json
+prompt_templates.py
 AI_Cards/
 *.log
 .env
