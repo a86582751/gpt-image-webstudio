@@ -20,6 +20,7 @@ ENV_MANAGED_KEYS = {
 PROMPT_TEMPLATE_KEYS = {
     "random_system_prompt",
     "random_user_prompt",
+    "random_scene_summary_prompt",
     "iteration_optimizer_prompt",
     "reverse_prompt",
 }
