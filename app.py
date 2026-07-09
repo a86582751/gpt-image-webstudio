@@ -890,11 +890,11 @@ def format_generation_stats(image_records, requested_count, total_elapsed, fallb
     )
 
 
-def format_failed_jobs_summary(failed_jobs, max_items=3):
+def format_failed_jobs_summary(failed_jobs, max_items=3, item_label="张"):
     if not failed_jobs:
         return ""
     samples = "；".join(
-        f"第 {job_index} 张：{message[:260]}"
+        f"第 {job_index} {item_label}：{message[:260]}"
         for job_index, message in failed_jobs[-max_items:]
     )
     extra_count = len(failed_jobs) - max_items
@@ -2730,7 +2730,7 @@ def generate_random_image(
             reasoning_effort=random_reasoning_effort,
         )
     except Exception as e:
-        yield "", [], f"随机提示词生成失败：{e}"
+        yield "", [], f"随机提示词生成失败：{e}{format_failed_jobs_summary([(1, str(e))], item_label='段')}"
         return
 
     persist_config({"prompt": random_prompt})
@@ -3107,10 +3107,12 @@ def generate_creative_images(
         return
 
     prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
+    prompt_failure_summary = format_failed_jobs_summary(failed_prompts, item_label="段")
+    image_failure_summary = format_failed_jobs_summary(failed_images, item_label="张")
     yield (
         prompt_text,
         build_gallery_items(saved_paths),
-        f"创意模式完成：图片模型 {image_model_provider}；共生成 {len(prompts)} 段提示词，保存 {len(saved_paths)} 张图片，提示词失败 {len(failed_prompts)} 段，图片失败 {len(failed_images)} 张；{format_generation_stats(image_records, creative_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}",
+        f"创意模式完成：图片模型 {image_model_provider}；共生成 {len(prompts)} 段提示词，保存 {len(saved_paths)} 张图片，提示词失败 {len(failed_prompts)} 段，图片失败 {len(failed_images)} 张；{format_generation_stats(image_records, creative_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}{prompt_failure_summary}{image_failure_summary}",
     )
 
 
@@ -3594,12 +3596,13 @@ def generate_iterative_image(
                 apply_iteration_event(event)
                 yield yield_state()
 
+    failed_task_summary = format_failed_jobs_summary(failed_tasks, item_label="组")
     yield (
         initial_prompts_text_for_ui(),
         prompt_text_for_ui(),
         build_iterative_gallery_items(final_records, final_only=True),
         build_iterative_gallery_items(process_records),
-        f"自我迭代完成：图片模型 {image_model_provider}；最终成品 {len(final_records)}/{iteration_batch_count} 张；过程图 {len(process_records)} 张；失败 {len(failed_tasks)} 组；{format_generation_stats(image_records, iteration_batch_count * iteration_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}",
+        f"自我迭代完成：图片模型 {image_model_provider}；最终成品 {len(final_records)}/{iteration_batch_count} 张；过程图 {len(process_records)} 张；失败 {len(failed_tasks)} 组；{format_generation_stats(image_records, iteration_batch_count * iteration_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}{failed_task_summary}",
     )
 
 
