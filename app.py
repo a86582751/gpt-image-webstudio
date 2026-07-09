@@ -326,7 +326,7 @@ def resolve_size(aspect_ratio, resolution):
     resolution_key = RESOLUTION_PRESETS.get(resolution, "高清")
     return ratio_sizes[resolution_key]
 
-SEEDREAM_SIZE_TABLES = {
+SEEDREAM_PRO_SIZE_TABLES = {
     "1K": {
         "1:1 正方形": "1024x1024",
         "4:3 横图": "1152x864",
@@ -334,6 +334,16 @@ SEEDREAM_SIZE_TABLES = {
         "16:9 宽屏": "1312x736",
         "9:16 竖屏": "736x1312",
     },
+    "2K": {
+        "1:1 正方形": "2048x2048",
+        "4:3 横图": "2304x1728",
+        "3:4 竖图": "1728x2304",
+        "16:9 宽屏": "2560x1440",
+        "9:16 竖屏": "1440x2560",
+    },
+}
+
+SEEDREAM_LITE_SIZE_TABLES = {
     "2K": {
         "1:1 正方形": "2048x2048",
         "4:3 横图": "2304x1728",
@@ -366,13 +376,15 @@ def resolve_seedream_size(aspect_ratio, resolution, model_id=""):
             "高清": "3K",
             "超清": "4K",
         }.get(resolution_key, "3K")
+        size_table = SEEDREAM_LITE_SIZE_TABLES
     else:
         size_tier = {
             "标准": "1K",
             "高清": "2K",
             "超清": "2K",
         }.get(resolution_key, "2K")
-    return SEEDREAM_SIZE_TABLES[size_tier].get(aspect_ratio, SEEDREAM_SIZE_TABLES[size_tier]["4:3 横图"])
+        size_table = SEEDREAM_PRO_SIZE_TABLES
+    return size_table[size_tier].get(aspect_ratio, size_table[size_tier]["4:3 横图"])
 
 
 def resolve_image_request_size(provider, aspect_ratio, resolution, model_id=""):
