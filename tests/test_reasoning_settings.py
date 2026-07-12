@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import app
+from webstudio import text_tasks
 
 
 class ReasoningSettingsTest(unittest.TestCase):
@@ -81,8 +82,8 @@ class SeedreamInterfaceFormatTest(unittest.TestCase):
 
 class SharedPromptJobTest(unittest.TestCase):
     def test_prompt_job_generates_prompt_and_scene_with_shared_context(self):
-        with patch.object(app, "generate_random_prompt", return_value="测试提示词") as generate_prompt:
-            with patch.object(app, "summarize_prompt_scene", return_value="书店") as summarize_scene:
+        with patch.object(text_tasks, "generate_random_prompt", return_value="测试提示词") as generate_prompt:
+            with patch.object(text_tasks, "summarize_prompt_scene", return_value="书店") as summarize_scene:
                 result = app.generate_random_prompt_job(
                     2,
                     "组",

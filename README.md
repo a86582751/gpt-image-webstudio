@@ -293,7 +293,15 @@ app_config.example.json
 ## 目录说明
 
 ```text
-app.py                    主程序
+app.py                    兼容启动入口
+webstudio/config.py       环境变量、提示词模板、配置状态与停止标记
+webstudio/core.py         尺寸、协议、响应解析、错误和媒体预处理
+webstudio/runtime.py      重试、有界并发池与请求启动间隔
+webstudio/text_tasks.py   文本模型与多模态任务层
+webstudio/image_tasks.py  图片请求、保存和批量图片任务层
+webstudio/workflows/      手动、图生图、随机、创意、自我迭代和反推工作流
+webstudio/settings.py     设置保存与页面状态加载
+webstudio/ui.py           Gradio 页面构建、样式与事件绑定
 config_store.py           配置读写工具
 env_loader.py             本地 .env 和提示词模板初始化
 prompt_templates_Default.py 公开默认提示词模板
