@@ -54,6 +54,7 @@ SEEDREAM_MODEL_ID_PRESETS = [
 SEEDREAM_RESPONSE_FORMAT_PRESETS = ["url", "b64_json"]
 SEEDREAM_OUTPUT_FORMAT_PRESETS = ["自动", "jpeg", "png"]
 SEEDREAM_WATERMARK_PRESETS = ["关闭", "开启"]
+SEEDREAM_INTERFACE_FORMAT_PRESETS = ["官方方舟", "OpenAI 兼容中转"]
 MODEL_PROTOCOL_PRESETS = ["自动识别", "OpenAI Chat", "OpenAI Responses", "Gemini 原生", "Claude Messages"]
 ITERATION_PROMPT_SOURCE_PRESETS = ["随机提示词", "自定义提示词"]
 REASONING_EFFORT_PRESETS = ["关闭", "低", "中", "高", "最高"]
@@ -144,6 +145,7 @@ DEFAULT_CONFIG = {
     "seedream_base_url": SEEDREAM_BASE_URL,
     "seedream_model_id": SEEDREAM_MODEL_ID,
     "seedream_api_key": SEEDREAM_API_KEY,
+    "seedream_interface_format": "官方方舟",
     "seedream_response_format": "url",
     "seedream_output_format": "自动",
     "seedream_watermark": "关闭",
@@ -283,6 +285,8 @@ def normalize_config(config):
         config["seedream_output_format"] = DEFAULT_CONFIG["seedream_output_format"]
     if config["seedream_watermark"] not in SEEDREAM_WATERMARK_PRESETS:
         config["seedream_watermark"] = DEFAULT_CONFIG["seedream_watermark"]
+    if config.get("seedream_interface_format") not in SEEDREAM_INTERFACE_FORMAT_PRESETS:
+        config["seedream_interface_format"] = DEFAULT_CONFIG["seedream_interface_format"]
     config["seedream_model_id"] = normalize_seedream_model_id(config.get("seedream_model_id"))
     if config["edit_input_fidelity"] not in INPUT_FIDELITY_PRESETS:
         config["edit_input_fidelity"] = DEFAULT_CONFIG["edit_input_fidelity"]
@@ -425,6 +429,15 @@ def normalize_seedream_output_format(output_format):
 def normalize_seedream_watermark(watermark):
     watermark = (watermark or "关闭").strip()
     return watermark if watermark in SEEDREAM_WATERMARK_PRESETS else "关闭"
+
+
+def normalize_seedream_interface_format(interface_format):
+    interface_format = (interface_format or "官方方舟").strip()
+    return interface_format if interface_format in SEEDREAM_INTERFACE_FORMAT_PRESETS else "官方方舟"
+
+
+def seedream_uses_official_interface():
+    return normalize_seedream_interface_format(CONFIG.get("seedream_interface_format")) == "官方方舟"
 
 
 def seedream_watermark_enabled(watermark):
@@ -1773,6 +1786,60 @@ def summarize_prompt_scene(
     )
 
 
+def generate_random_prompt_job(
+    job_index,
+    item_label,
+    prompt_kind,
+    base_url,
+    model_id,
+    api_key,
+    preference,
+    protocol,
+    retry_count,
+    retry_delay,
+    reasoning_effort,
+    used_scenes=None,
+    summarize_scene=False,
+):
+    events = []
+    prompt = generate_random_prompt(
+        base_url,
+        model_id,
+        api_key,
+        preference,
+        protocol,
+        retry_count,
+        retry_delay,
+        lambda label, attempt, retries, error: events.append(
+            f"第 {job_index} {item_label}{prompt_kind}触发重试 {attempt}/{retries}：{error}"
+        ),
+        reasoning_effort=reasoning_effort,
+        used_scenes=used_scenes,
+    )
+    scene = ""
+    if summarize_scene:
+        scene = summarize_prompt_scene(
+            prompt,
+            base_url,
+            model_id,
+            api_key,
+            protocol,
+            retry_count,
+            retry_delay,
+            lambda label, attempt, retries, error: events.append(
+                f"第 {job_index} {item_label}场景概述触发重试 {attempt}/{retries}：{error}"
+            ),
+        )
+    return job_index, prompt, scene, events
+
+
+def submit_sequential_prompt_job(executor, futures, job_index, total_count, worker, used_scenes):
+    if job_index > total_count:
+        return job_index
+    futures[executor.submit(worker, job_index, list(used_scenes))] = job_index
+    return job_index + 1
+
+
 def is_http_url(value):
     return isinstance(value, str) and value.startswith(("http://", "https://"))
 
@@ -1869,7 +1936,7 @@ def generate_one_image(
     saved_paths = []
 
     def request_image():
-        if image_model_provider == "豆包 Seedream":
+        if image_model_provider == "豆包 Seedream" and seedream_uses_official_interface():
             return parse_image_items(
                 post_json(
                     resolve_seedream_api_url(active_base_url),
@@ -1885,6 +1952,26 @@ def generate_one_image(
                         seedream_output_format,
                         seedream_watermark,
                     ),
+                    timeout=request_timeout(IMAGE_READ_TIMEOUT),
+                )
+            )
+        if image_model_provider == "豆包 Seedream":
+            payload = {
+                "model": active_model_id.strip(),
+                "size": size,
+                "n": 1,
+                "prompt": prompt.strip(),
+                "watermark": seedream_watermark_enabled(seedream_watermark),
+                "response_format": normalize_seedream_response_format(seedream_response_format),
+            }
+            output_format = normalize_seedream_output_format(seedream_output_format)
+            if output_format != "自动":
+                payload["output_format"] = output_format
+            return parse_image_items(
+                post_json(
+                    resolve_api_url(active_base_url),
+                    headers={"Authorization": f"Bearer {active_api_key.strip()}"},
+                    payload=payload,
                     timeout=request_timeout(IMAGE_READ_TIMEOUT),
                 )
             )
@@ -1956,7 +2043,7 @@ def generate_one_image_edit(
     saved_paths = []
 
     def request_edit():
-        if image_model_provider == "豆包 Seedream":
+        if image_model_provider == "豆包 Seedream" and seedream_uses_official_interface():
             # Seedream does not support OpenAI's input_fidelity edit parameter.
             return parse_image_items(
                 post_json(
@@ -1984,9 +2071,16 @@ def generate_one_image_edit(
             "prompt": prompt.strip(),
             "size": size,
             "n": "1",
-            "quality": quality,
-            "input_fidelity": input_fidelity,
         }
+        if image_model_provider == "豆包 Seedream":
+            data["watermark"] = str(seedream_watermark_enabled(seedream_watermark)).lower()
+            data["response_format"] = normalize_seedream_response_format(seedream_response_format)
+            output_format = normalize_seedream_output_format(seedream_output_format)
+            if output_format != "自动":
+                data["output_format"] = output_format
+        else:
+            data["quality"] = quality
+            data["input_fidelity"] = input_fidelity
         response = requests.post(
             resolve_edit_api_url(active_base_url),
             headers={"Authorization": f"Bearer {active_api_key.strip()}"},
@@ -2036,6 +2130,59 @@ def run_with_retry(action, label, retries=1, delay_seconds=2, on_retry=None):
     raise RuntimeError(f"{label}失败，已自动重试 {retries} 次：{last_error}") from last_error
 
 
+class ImageRequestLaunchGate:
+    def __init__(self, interval_seconds=0):
+        self.interval_seconds = normalize_image_request_delay(interval_seconds)
+        self.lock = threading.Lock()
+        self.next_launch_at = time.perf_counter()
+
+    def wait(self, stop_mode=None):
+        with self.lock:
+            now = time.perf_counter()
+            scheduled_at = max(now, self.next_launch_at)
+            self.next_launch_at = scheduled_at + self.interval_seconds
+        remaining = max(0, scheduled_at - time.perf_counter())
+        while remaining > 0:
+            if stop_mode and should_stop(stop_mode):
+                raise RuntimeError("任务已停止。")
+            time.sleep(min(0.1, remaining))
+            remaining = max(0, scheduled_at - time.perf_counter())
+
+
+def run_bounded_concurrent_jobs(jobs, concurrency, worker, index_getter, stop_mode=None):
+    jobs = list(jobs)
+    concurrency = max(1, min(int(concurrency), len(jobs) or 1))
+    with ThreadPoolExecutor(max_workers=concurrency) as executor:
+        pending_jobs = iter(jobs)
+        future_to_index = {}
+
+        def submit_next():
+            try:
+                job = next(pending_jobs)
+            except StopIteration:
+                return False
+            if stop_mode and should_stop(stop_mode):
+                return False
+            future_to_index[executor.submit(worker, job)] = index_getter(job)
+            return True
+
+        for _ in range(concurrency):
+            submit_next()
+
+        while future_to_index:
+            if stop_mode and should_stop(stop_mode):
+                for future in future_to_index:
+                    future.cancel()
+                yield None, None, True
+                return
+
+            done, _pending = wait(set(future_to_index), return_when=FIRST_COMPLETED)
+            for future in done:
+                job_index = future_to_index.pop(future)
+                submit_next()
+                yield job_index, future, False
+
+
 def generate_images_concurrently(
     prompt_jobs,
     save_dir,
@@ -2074,6 +2221,7 @@ def generate_images_concurrently(
     request_size = resolve_image_request_size(image_model_provider, aspect_ratio, resolution, active_model_id)
     quality = normalize_quality(quality)
     image_request_delay = normalize_image_request_delay(image_request_delay)
+    launch_gate = ImageRequestLaunchGate(image_request_delay)
 
     if not prompt_jobs:
         yield [], "没有可生成的提示词。"
@@ -2088,10 +2236,7 @@ def generate_images_concurrently(
         job_index, job_prompt = job
         if stop_mode and should_stop(stop_mode):
             raise RuntimeError("任务已停止。")
-        if image_request_delay > 0:
-            time.sleep((job_index - 1) * image_request_delay)
-            if stop_mode and should_stop(stop_mode):
-                raise RuntimeError("任务已停止。")
+        launch_gate.wait(stop_mode)
         started_at = time.perf_counter()
         events = []
         image_path = generate_one_image(
@@ -2105,7 +2250,7 @@ def generate_images_concurrently(
             quality,
             api_key,
             seedream_base_url,
-                seedream_model_id,
+            seedream_model_id,
             seedream_api_key,
             seedream_response_format,
             seedream_output_format,
@@ -2120,53 +2265,35 @@ def generate_images_concurrently(
         return job_index, job_prompt, image_path, time.perf_counter() - started_at, events
 
     try:
-        with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            # Keep only a small window of futures queued so Stop can prevent later jobs from starting.
-            job_iter = iter(prompt_jobs)
-            future_to_index = {}
-
-            def submit_next_job():
-                try:
-                    job = next(job_iter)
-                except StopIteration:
-                    return
-                future_to_index[executor.submit(worker, job)] = job[0]
-
-            for _ in range(concurrency):
-                submit_next_job()
-
-            while future_to_index:
-                if stop_mode and should_stop(stop_mode):
-                    for pending_future in future_to_index:
-                        pending_future.cancel()
-                    yield (
-                        build_gallery_items(saved_paths),
-                        f"已停止：保存 {len(saved_paths)}/{total_count} 张。",
-                    )
-                    return
-                done, _pending = wait(set(future_to_index), return_when=FIRST_COMPLETED)
-                future = next(iter(done))
-                try:
-                    job_index, _job_prompt, image_path, elapsed, events = future.result()
-                    saved_paths.append(image_path)
-                    image_records.append((job_index, image_path, elapsed))
-                    dimensions = get_image_dimensions(image_path) or request_size
-                    status_extra = f"\n{events[-1]}" if events else ""
-                    yield (
-                        build_gallery_items(saved_paths),
-                        f"已完成 {len(saved_paths)}/{total_count} 张；刚完成第 {job_index} 张，分辨率 {dimensions}，耗时 {format_duration(elapsed)}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}{status_extra}",
-                    )
-                except Exception as e:
-                    job_index = future_to_index[future]
-                    failed_jobs.append((job_index, str(e)))
-                    yield (
-                        build_gallery_items(saved_paths),
-                        f"第 {job_index} 张失败并已跳过：{e}；已保存 {len(saved_paths)}/{total_count} 张，失败 {len(failed_jobs)} 张。",
-                    )
-                finally:
-                    future_to_index.pop(future, None)
-                    if not (stop_mode and should_stop(stop_mode)):
-                        submit_next_job()
+        for job_index, future, stopped in run_bounded_concurrent_jobs(
+            prompt_jobs,
+            concurrency,
+            worker,
+            lambda job: job[0],
+            stop_mode,
+        ):
+            if stopped:
+                yield (
+                    build_gallery_items(saved_paths),
+                    f"已停止：保存 {len(saved_paths)}/{total_count} 张。",
+                )
+                return
+            try:
+                job_index, _job_prompt, image_path, elapsed, events = future.result()
+                saved_paths.append(image_path)
+                image_records.append((job_index, image_path, elapsed))
+                dimensions = get_image_dimensions(image_path) or request_size
+                status_extra = f"\n{events[-1]}" if events else ""
+                yield (
+                    build_gallery_items(saved_paths),
+                    f"已完成 {len(saved_paths)}/{total_count} 张；刚完成第 {job_index} 张，分辨率 {dimensions}，耗时 {format_duration(elapsed)}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}{status_extra}",
+                )
+            except Exception as e:
+                failed_jobs.append((job_index, str(e)))
+                yield (
+                    build_gallery_items(saved_paths),
+                    f"第 {job_index} 张失败并已跳过：{e}；已保存 {len(saved_paths)}/{total_count} 张，失败 {len(failed_jobs)} 张。",
+                )
     except Exception as e:
         failed_count = len(failed_jobs) or total_count - len(saved_paths)
         yield (
@@ -2244,6 +2371,7 @@ def generate_image_edits_concurrently(
     request_size = resolve_image_request_size(image_model_provider, aspect_ratio, resolution, active_model_id)
     quality = normalize_quality(quality)
     image_request_delay = normalize_image_request_delay(image_request_delay)
+    launch_gate = ImageRequestLaunchGate(image_request_delay)
     try:
         prepared_preview = [
             prepare_seedream_input_image(path) if image_model_provider == "豆包 Seedream" else prepare_edit_input_image(path)
@@ -2261,10 +2389,7 @@ def generate_image_edits_concurrently(
     def worker(job_index):
         if should_stop("edit"):
             raise RuntimeError("任务已停止。")
-        if image_request_delay > 0:
-            time.sleep((job_index - 1) * image_request_delay)
-            if should_stop("edit"):
-                raise RuntimeError("任务已停止。")
+        launch_gate.wait("edit")
         started_at = time.perf_counter()
         events = []
         image_path, prepared_images = generate_one_image_edit(
@@ -2279,7 +2404,7 @@ def generate_image_edits_concurrently(
             quality,
             api_key,
             seedream_base_url,
-                seedream_model_id,
+            seedream_model_id,
             seedream_api_key,
             seedream_response_format,
             seedream_output_format,
@@ -2295,51 +2420,32 @@ def generate_image_edits_concurrently(
         return job_index, image_path, time.perf_counter() - started_at, events, prepared_images
 
     try:
-        with ThreadPoolExecutor(max_workers=concurrency) as executor:
-            pending_jobs = iter(range(1, image_count + 1))
-            future_to_index = {}
-
-            def submit_next():
-                try:
-                    job_index = next(pending_jobs)
-                except StopIteration:
-                    return False
-                if should_stop("edit"):
-                    return False
-                future_to_index[executor.submit(worker, job_index)] = job_index
-                return True
-
-            for _ in range(concurrency):
-                if not submit_next():
-                    break
-
-            while future_to_index:
-                if should_stop("edit"):
-                    for pending_future in future_to_index:
-                        pending_future.cancel()
-                    yield build_gallery_items(saved_paths), f"已停止：已保存 {len(saved_paths)}/{image_count} 张。"
-                    return
-
-                done, _pending = wait(set(future_to_index), return_when=FIRST_COMPLETED)
-                for future in done:
-                    job_index = future_to_index.pop(future)
-                    try:
-                        index, image_path, elapsed, events, prepared_images = future.result()
-                        saved_paths.append(image_path)
-                        image_records.append((index, image_path, elapsed))
-                        dimensions = get_image_dimensions(image_path) or request_size
-                        status_extra = f"\n{events[-1]}" if events else ""
-                        yield (
-                            build_gallery_items(saved_paths),
-                            f"已完成 {len(saved_paths)}/{image_count} 张；刚完成第 {index} 张，分辨率 {dimensions}，耗时 {format_duration(elapsed)}；{format_edit_input_summary(prepared_images)}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}{status_extra}",
-                        )
-                    except Exception as e:
-                        failed_jobs.append((job_index, str(e)))
-                        yield (
-                            build_gallery_items(saved_paths),
-                            f"第 {job_index} 张图片编辑失败并已跳过：{e}；已保存 {len(saved_paths)}/{image_count} 张，失败 {len(failed_jobs)} 张。",
-                        )
-                    submit_next()
+        for job_index, future, stopped in run_bounded_concurrent_jobs(
+            range(1, image_count + 1),
+            concurrency,
+            worker,
+            lambda index: index,
+            "edit",
+        ):
+            if stopped:
+                yield build_gallery_items(saved_paths), f"已停止：已保存 {len(saved_paths)}/{image_count} 张。"
+                return
+            try:
+                index, image_path, elapsed, events, prepared_images = future.result()
+                saved_paths.append(image_path)
+                image_records.append((index, image_path, elapsed))
+                dimensions = get_image_dimensions(image_path) or request_size
+                status_extra = f"\n{events[-1]}" if events else ""
+                yield (
+                    build_gallery_items(saved_paths),
+                    f"已完成 {len(saved_paths)}/{image_count} 张；刚完成第 {index} 张，分辨率 {dimensions}，耗时 {format_duration(elapsed)}；{format_edit_input_summary(prepared_images)}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}{status_extra}",
+                )
+            except Exception as e:
+                failed_jobs.append((job_index, str(e)))
+                yield (
+                    build_gallery_items(saved_paths),
+                    f"第 {job_index} 张图片编辑失败并已跳过：{e}；已保存 {len(saved_paths)}/{image_count} 张，失败 {len(failed_jobs)} 张。",
+                )
 
     except Exception as e:
         yield build_gallery_items(saved_paths), f"图片编辑调度中断：{e}；已保存 {len(saved_paths)}/{image_count} 张。"
@@ -2719,7 +2825,10 @@ def generate_random_image(
         return
 
     try:
-        random_prompt = generate_random_prompt(
+        _index, random_prompt, _scene, prompt_events = generate_random_prompt_job(
+            1,
+            "段",
+            "提示词",
             random_base_url,
             random_model_id,
             random_api_key,
@@ -2727,18 +2836,19 @@ def generate_random_image(
             random_protocol,
             retry_count,
             retry_delay,
-            reasoning_effort=random_reasoning_effort,
+            random_reasoning_effort,
         )
     except Exception as e:
         yield "", [], f"随机提示词生成失败：{e}{format_failed_jobs_summary([(1, str(e))], item_label='段')}"
         return
 
     persist_config({"prompt": random_prompt})
+    prompt_status_extra = f"\n{prompt_events[-1]}" if prompt_events else ""
 
     yield (
         random_prompt,
         [],
-        f"随机提示词已生成；耗时 {format_duration(time.perf_counter() - prompt_started_at)}。开始生成图片...",
+        f"随机提示词已生成；耗时 {format_duration(time.perf_counter() - prompt_started_at)}。开始生成图片...{prompt_status_extra}",
     )
 
     for gallery_items, status in generate_images_from_prompt(
@@ -2817,6 +2927,7 @@ def generate_creative_images(
     image_concurrency = max(1, int(image_concurrency))
     retry_count, retry_delay = normalize_retry_settings(retry_count, retry_delay)
     image_request_delay = normalize_image_request_delay(image_request_delay)
+    launch_gate = ImageRequestLaunchGate(image_request_delay)
     total_started_at = time.perf_counter()
     prompts = []
     saved_paths = []
@@ -2873,8 +2984,10 @@ def generate_creative_images(
     yield "", [], f"正在生成 {creative_count} 段随机提示词并流水线出图；图片模型 {image_model_provider}；文本并发 {text_concurrency}，图片并发 {image_concurrency}；生图并发间隔 {image_request_delay:g} 秒；请求尺寸 {request_size}；品质 {quality}{enhance_status}。"
 
     def prompt_worker(index, used_scenes_snapshot=None):
-        events = []
-        prompt = generate_random_prompt(
+        return generate_random_prompt_job(
+            index,
+            "段",
+            "提示词",
             random_base_url,
             random_model_id,
             random_api_key,
@@ -2882,33 +2995,13 @@ def generate_creative_images(
             random_protocol,
             retry_count,
             retry_delay,
-            lambda label, attempt, retries, error: events.append(
-                f"第 {index} 段提示词触发重试 {attempt}/{retries}：{error}"
-            ),
-            reasoning_effort=random_reasoning_effort,
+            random_reasoning_effort,
             used_scenes=used_scenes_snapshot,
+            summarize_scene=creative_random_enhance,
         )
-        scene = ""
-        if creative_random_enhance:
-            scene = summarize_prompt_scene(
-                prompt,
-                random_base_url,
-                random_model_id,
-                random_api_key,
-                random_protocol,
-                retry_count,
-                retry_delay,
-                lambda label, attempt, retries, error: events.append(
-                    f"第 {index} 段场景概述触发重试 {attempt}/{retries}：{error}"
-                ),
-            )
-        return index, prompt, scene, events
 
     def image_worker(index, prompt):
-        if image_request_delay > 0:
-            time.sleep((index - 1) * image_request_delay)
-            if should_stop("creative"):
-                raise RuntimeError("任务已停止。")
+        launch_gate.wait("creative")
         started_at = time.perf_counter()
         events = []
         image_path = generate_one_image(
@@ -2922,7 +3015,7 @@ def generate_creative_images(
             quality,
             image_api_key,
             seedream_base_url,
-                seedream_model_id,
+            seedream_model_id,
             seedream_api_key,
             seedream_response_format,
             seedream_output_format,
@@ -2937,165 +3030,107 @@ def generate_creative_images(
         return index, image_path, time.perf_counter() - started_at, events
 
     try:
-        with ThreadPoolExecutor(max_workers=min(image_concurrency, creative_count)) as image_executor:
+        prompt_workers = 1 if creative_random_enhance else min(text_concurrency, creative_count)
+        with ThreadPoolExecutor(max_workers=prompt_workers) as prompt_executor, ThreadPoolExecutor(
+            max_workers=min(image_concurrency, creative_count)
+        ) as image_executor:
+            prompt_futures = {}
+            image_futures = {}
+            next_prompt_index = creative_count + 1
+
             if creative_random_enhance:
-                with ThreadPoolExecutor(max_workers=1) as prompt_executor:
-                    image_futures = {}
-                    prompt_futures = {
-                        prompt_executor.submit(prompt_worker, 1, used_scenes.copy()): 1
-                    }
-                    next_prompt_index = 2
-
-                    while prompt_futures or image_futures:
-                        if should_stop("creative"):
-                            for pending_future in prompt_futures:
-                                pending_future.cancel()
-                            for pending_future in image_futures:
-                                pending_future.cancel()
-                            prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
-                            yield (
-                                prompt_text,
-                                build_gallery_items(saved_paths),
-                                f"已停止：已生成提示词 {len(prompts)}/{creative_count} 段，已保存图片 {len(saved_paths)}/{creative_count} 张；已经用过场景：{format_used_scenes(used_scenes)}。",
-                            )
-                            return
-
-                        pending_work = set(prompt_futures) | set(image_futures)
-                        done, _pending = wait(pending_work, return_when=FIRST_COMPLETED)
-                        for future in done:
-                            if future in prompt_futures:
-                                index = prompt_futures.pop(future)
-                                prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
-                                try:
-                                    index, prompt, scene, events = future.result()
-                                    retry_events.extend(events)
-                                    prompts.append((index, prompt))
-                                    if scene:
-                                        used_scenes.append(scene)
-                                    image_futures[image_executor.submit(image_worker, index, prompt)] = index
-                                    prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
-                                    status_extra = f"\n{retry_events[-1]}" if retry_events else ""
-                                    scene_text = format_used_scenes(used_scenes)
-                                    yield (
-                                        prompt_text,
-                                        build_gallery_items(saved_paths),
-                                        f"已生成 {len(prompts)}/{creative_count} 段提示词；已启动第 {index} 张生图；已完成 {len(saved_paths)}/{creative_count} 张；已经用过场景：{scene_text or '暂无'}。{status_extra}",
-                                    )
-                                except Exception as e:
-                                    failed_prompts.append((index, str(e)))
-                                    yield (
-                                        prompt_text,
-                                        build_gallery_items(saved_paths),
-                                        f"提示词失败 {len(failed_prompts)} 段；跳过第 {index} 段提示词：{e}；已完成图片 {len(saved_paths)}/{creative_count} 张。",
-                                    )
-
-                                if next_prompt_index <= creative_count and not should_stop("creative"):
-                                    prompt_futures[
-                                        prompt_executor.submit(prompt_worker, next_prompt_index, used_scenes.copy())
-                                    ] = next_prompt_index
-                                    next_prompt_index += 1
-
-                            elif future in image_futures:
-                                prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
-                                index = image_futures.pop(future)
-                                try:
-                                    index, image_path, elapsed, events = future.result()
-                                    retry_events.extend(events)
-                                    saved_paths.append(image_path)
-                                    image_records.append((index, image_path, elapsed))
-                                    dimensions = get_image_dimensions(image_path) or request_size
-                                    status_extra = f"\n{retry_events[-1]}" if events else ""
-                                    yield (
-                                        prompt_text,
-                                        build_gallery_items(saved_paths),
-                                        f"已完成 {len(saved_paths)}/{creative_count} 张；刚完成第 {index} 张，分辨率 {dimensions}，耗时 {format_duration(elapsed)}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}；已经用过场景：{format_used_scenes(used_scenes) or '暂无'}{status_extra}",
-                                    )
-                                except Exception as e:
-                                    failed_images.append((index, str(e)))
-                                    yield (
-                                        prompt_text,
-                                        build_gallery_items(saved_paths),
-                                        f"第 {index} 张图片失败并已跳过：{e}；已保存 {len(saved_paths)}/{creative_count} 张，失败 {len(failed_images)} 张。",
-                                    )
-
-                if prompts:
-                    persist_config({"prompt": sorted(prompts)[-1][1]})
+                next_prompt_index = submit_sequential_prompt_job(
+                    prompt_executor,
+                    prompt_futures,
+                    1,
+                    creative_count,
+                    prompt_worker,
+                    used_scenes,
+                )
             else:
-                with ThreadPoolExecutor(max_workers=min(text_concurrency, creative_count)) as prompt_executor:
-            # Prompt generation and image generation run as a pipeline: each prompt starts its image job immediately.
-                    prompt_futures = {
+                prompt_futures.update(
+                    {
                         prompt_executor.submit(prompt_worker, index): index
                         for index in range(1, creative_count + 1)
                     }
-                    image_futures = {}
-                    pending_prompt_futures = set(prompt_futures)
+                )
 
-                    while pending_prompt_futures or image_futures:
-                        if should_stop("creative"):
-                            for pending_future in pending_prompt_futures:
-                                pending_future.cancel()
-                            for pending_future in image_futures:
-                                pending_future.cancel()
+            while prompt_futures or image_futures:
+                if should_stop("creative"):
+                    for future in set(prompt_futures) | set(image_futures):
+                        future.cancel()
+                    prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
+                    scene_status = f"；已经用过场景：{format_used_scenes(used_scenes) or '暂无'}" if creative_random_enhance else ""
+                    yield (
+                        prompt_text,
+                        build_gallery_items(saved_paths),
+                        f"已停止：已生成提示词 {len(prompts)}/{creative_count} 段，已保存图片 {len(saved_paths)}/{creative_count} 张{scene_status}。",
+                    )
+                    return
+
+                done, _pending = wait(set(prompt_futures) | set(image_futures), return_when=FIRST_COMPLETED)
+                for future in done:
+                    if future in prompt_futures:
+                        index = prompt_futures.pop(future)
+                        prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
+                        try:
+                            index, prompt, scene, events = future.result()
+                            retry_events.extend(events)
+                            prompts.append((index, prompt))
+                            if scene:
+                                used_scenes.append(scene)
+                            image_futures[image_executor.submit(image_worker, index, prompt)] = index
                             prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
+                            status_extra = f"\n{retry_events[-1]}" if retry_events else ""
+                            scene_status = f"；已经用过场景：{format_used_scenes(used_scenes) or '暂无'}" if creative_random_enhance else ""
                             yield (
                                 prompt_text,
                                 build_gallery_items(saved_paths),
-                                f"已停止：已生成提示词 {len(prompts)}/{creative_count} 段，已保存图片 {len(saved_paths)}/{creative_count} 张。",
+                                f"已生成 {len(prompts)}/{creative_count} 段提示词；已启动第 {index} 张生图；已完成 {len(saved_paths)}/{creative_count} 张{scene_status}。{status_extra}",
                             )
-                            return
-                        pending_work = set(pending_prompt_futures) | set(image_futures)
-                        done, _pending = wait(pending_work, return_when=FIRST_COMPLETED)
+                        except Exception as e:
+                            failed_prompts.append((index, str(e)))
+                            yield (
+                                prompt_text,
+                                build_gallery_items(saved_paths),
+                                f"提示词失败 {len(failed_prompts)} 段；跳过第 {index} 段提示词：{e}；已完成图片 {len(saved_paths)}/{creative_count} 张。",
+                            )
 
-                        for future in done:
-                            if future in pending_prompt_futures:
-                                pending_prompt_futures.remove(future)
-                                prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
-                                try:
-                                    index, prompt, _scene, events = future.result()
-                                    retry_events.extend(events)
-                                    prompts.append((index, prompt))
-                                    image_futures[image_executor.submit(image_worker, index, prompt)] = index
-                                    prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
-                                    status_extra = f"\n{retry_events[-1]}" if retry_events else ""
-                                    yield (
-                                        prompt_text,
-                                        build_gallery_items(saved_paths),
-                                        f"已生成 {len(prompts)}/{creative_count} 段提示词；已启动第 {index} 张生图；已完成 {len(saved_paths)}/{creative_count} 张。{status_extra}",
-                                    )
-                                except Exception as e:
-                                    index = prompt_futures[future]
-                                    failed_prompts.append((index, str(e)))
-                                    status_extra = f"\n跳过第 {index} 段提示词：{e}"
-                                    yield (
-                                        prompt_text,
-                                        build_gallery_items(saved_paths),
-                                        f"提示词失败 {len(failed_prompts)} 段；已完成图片 {len(saved_paths)}/{creative_count} 张。{status_extra}",
-                                    )
-                            elif future in image_futures:
-                                prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
-                                index = image_futures.pop(future)
-                                try:
-                                    index, image_path, elapsed, events = future.result()
-                                    retry_events.extend(events)
-                                    saved_paths.append(image_path)
-                                    image_records.append((index, image_path, elapsed))
-                                    dimensions = get_image_dimensions(image_path) or request_size
-                                    status_extra = f"\n{retry_events[-1]}" if events else ""
-                                    yield (
-                                        prompt_text,
-                                        build_gallery_items(saved_paths),
-                                        f"已完成 {len(saved_paths)}/{creative_count} 张；刚完成第 {index} 张，分辨率 {dimensions}，耗时 {format_duration(elapsed)}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}{status_extra}",
-                                    )
-                                except Exception as e:
-                                    failed_images.append((index, str(e)))
-                                    yield (
-                                        prompt_text,
-                                        build_gallery_items(saved_paths),
-                                        f"第 {index} 张图片失败并已跳过：{e}；已保存 {len(saved_paths)}/{creative_count} 张，失败 {len(failed_images)} 张。",
-                                    )
+                        if creative_random_enhance and not should_stop("creative"):
+                            next_prompt_index = submit_sequential_prompt_job(
+                                prompt_executor,
+                                prompt_futures,
+                                next_prompt_index,
+                                creative_count,
+                                prompt_worker,
+                                used_scenes,
+                            )
+                    else:
+                        index = image_futures.pop(future)
+                        prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
+                        try:
+                            index, image_path, elapsed, events = future.result()
+                            retry_events.extend(events)
+                            saved_paths.append(image_path)
+                            image_records.append((index, image_path, elapsed))
+                            dimensions = get_image_dimensions(image_path) or request_size
+                            status_extra = f"\n{retry_events[-1]}" if events else ""
+                            scene_status = f"；已经用过场景：{format_used_scenes(used_scenes) or '暂无'}" if creative_random_enhance else ""
+                            yield (
+                                prompt_text,
+                                build_gallery_items(saved_paths),
+                                f"已完成 {len(saved_paths)}/{creative_count} 张；刚完成第 {index} 张，分辨率 {dimensions}，耗时 {format_duration(elapsed)}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}{scene_status}{status_extra}",
+                            )
+                        except Exception as e:
+                            failed_images.append((index, str(e)))
+                            yield (
+                                prompt_text,
+                                build_gallery_items(saved_paths),
+                                f"第 {index} 张图片失败并已跳过：{e}；已保存 {len(saved_paths)}/{creative_count} 张，失败 {len(failed_images)} 张。",
+                            )
 
-                    if prompts:
-                        persist_config({"prompt": sorted(prompts)[-1][1]})
+            if prompts:
+                persist_config({"prompt": sorted(prompts)[-1][1]})
 
     except Exception as e:
         prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
@@ -3207,8 +3242,7 @@ def generate_iterative_image(
     request_size = resolve_image_request_size(image_model_provider, aspect_ratio, resolution, selected_model_id)
     image_gate = threading.Semaphore(min(iteration_image_concurrency, iteration_batch_count))
     text_gate = threading.Semaphore(min(iteration_text_concurrency, iteration_batch_count))
-    image_launch_lock = threading.Lock()
-    next_image_launch_at = time.perf_counter()
+    launch_gate = ImageRequestLaunchGate(image_request_delay)
 
     persist_config(
         {
@@ -3309,20 +3343,10 @@ def generate_iterative_image(
         event_queue.put({"kind": kind, "task_index": task_index, **payload})
 
     def run_image_generation(task_index, round_index, prompt):
-        nonlocal next_image_launch_at
         with image_gate:
             if should_stop("iterative"):
                 raise RuntimeError("任务已停止。")
-            sleep_seconds = 0
-            with image_launch_lock:
-                now = time.perf_counter()
-                scheduled_at = max(now, next_image_launch_at)
-                sleep_seconds = max(0, scheduled_at - now)
-                next_image_launch_at = scheduled_at + image_request_delay
-            if image_request_delay > 0:
-                time.sleep(sleep_seconds)
-                if should_stop("iterative"):
-                    raise RuntimeError("任务已停止。")
+            launch_gate.wait("iterative")
             started_at = time.perf_counter()
             image_path = generate_one_image(
                 prompt,
@@ -3355,7 +3379,10 @@ def generate_iterative_image(
             if should_stop("iterative"):
                 raise RuntimeError("任务已停止。")
             put_event("status", task_index, status="正在生成初始随机提示词")
-            return generate_random_prompt(
+            _index, prompt, _scene, events = generate_random_prompt_job(
+                task_index,
+                "组",
+                "初始提示词",
                 random_base_url,
                 random_model_id,
                 random_api_key,
@@ -3363,12 +3390,17 @@ def generate_iterative_image(
                 random_protocol,
                 retry_count,
                 retry_delay,
-                reasoning_effort=random_reasoning_effort,
+                random_reasoning_effort,
             )
+            for event in events:
+                put_event("status", task_index, status=event)
+            return prompt
 
     def generate_enhanced_initial_prompt_for_task(task_index, scenes_snapshot):
-        events = []
-        prompt = generate_random_prompt(
+        _index, prompt, scene, events = generate_random_prompt_job(
+            task_index,
+            "组",
+            "初始提示词",
             random_base_url,
             random_model_id,
             random_api_key,
@@ -3376,23 +3408,9 @@ def generate_iterative_image(
             random_protocol,
             retry_count,
             retry_delay,
-            lambda label, attempt, retries, error: events.append(
-                f"第 {task_index} 组初始提示词触发重试 {attempt}/{retries}：{error}"
-            ),
-            reasoning_effort=random_reasoning_effort,
+            random_reasoning_effort,
             used_scenes=scenes_snapshot,
-        )
-        scene = summarize_prompt_scene(
-            prompt,
-            random_base_url,
-            random_model_id,
-            random_api_key,
-            random_protocol,
-            retry_count,
-            retry_delay,
-            lambda label, attempt, retries, error: events.append(
-                f"第 {task_index} 组场景概述触发重试 {attempt}/{retries}：{error}"
-            ),
+            summarize_scene=True,
         )
         return prompt, scene, events
 
@@ -3497,102 +3515,93 @@ def generate_iterative_image(
         f"开始并行自我迭代：生成数量 {iteration_batch_count}，每组完整运行 {iteration_count} 轮。",
     )
 
-    if iteration_random_enhance:
-        with ThreadPoolExecutor(max_workers=1) as prompt_executor, ThreadPoolExecutor(max_workers=iteration_batch_count) as executor:
-            prompt_futures = {
-                prompt_executor.submit(generate_enhanced_initial_prompt_for_task, 1, used_scenes.copy()): 1
-            }
-            futures = {}
-            remaining = set()
-            next_prompt_index = 2
+    with ThreadPoolExecutor(max_workers=1) as prompt_executor, ThreadPoolExecutor(max_workers=iteration_batch_count) as executor:
+        prompt_futures = {}
+        futures = {}
+        remaining = set()
+        next_prompt_index = iteration_batch_count + 1
 
-            while prompt_futures or remaining:
-                if should_stop("iterative"):
-                    for future in prompt_futures:
-                        future.cancel()
-                    for future in remaining:
-                        future.cancel()
-                    yield yield_state("已停止：正在等待已进入接口请求的任务返回。")
-                    return
+        if iteration_random_enhance:
+            next_prompt_index = submit_sequential_prompt_job(
+                prompt_executor,
+                prompt_futures,
+                1,
+                iteration_batch_count,
+                generate_enhanced_initial_prompt_for_task,
+                used_scenes,
+            )
+        else:
+            futures.update(
+                {
+                    executor.submit(iteration_worker, task_index): task_index
+                    for task_index in range(1, iteration_batch_count + 1)
+                }
+            )
+            remaining.update(futures)
 
-                did_update = False
-                done_prompt_futures = {future for future in prompt_futures if future.done()}
-                for future in done_prompt_futures:
-                    task_index = prompt_futures.pop(future)
-                    try:
-                        prompt, scene, events = future.result()
-                        initial_prompt_plan[task_index] = prompt
-                        initial_prompt_records[task_index] = prompt
-                        if scene:
-                            used_scenes.append(scene)
-                        task_statuses[task_index] = "初始提示词已就绪"
-                        retry_line = f"\n{events[-1]}" if events else ""
-                        yield yield_state(
-                            f"随机增强：第 {task_index}/{iteration_batch_count} 组初始提示词已生成，已立即启动该组迭代；已经用过场景：{format_used_scenes(used_scenes) or '暂无'}。{retry_line}"
-                        )
-                    except Exception as e:
-                        task_statuses[task_index] = "失败"
-                        failed_tasks.append((task_index, f"初始提示词生成失败：{e}"))
-                        yield yield_state(f"第 {task_index} 组初始提示词生成失败并已跳过：{e}")
-                    else:
-                        future_task = executor.submit(iteration_worker, task_index)
-                        futures[future_task] = task_index
-                        remaining.add(future_task)
+        while prompt_futures or remaining:
+            if should_stop("iterative"):
+                for future in set(prompt_futures) | remaining:
+                    future.cancel()
+                yield yield_state("已停止：正在等待已进入接口请求的任务返回。")
+                return
 
-                    if next_prompt_index <= iteration_batch_count:
-                        task_statuses[next_prompt_index] = "正在串行生成增强初始提示词"
-                        prompt_futures[
-                            prompt_executor.submit(
-                                generate_enhanced_initial_prompt_for_task,
-                                next_prompt_index,
-                                used_scenes.copy(),
-                            )
-                        ] = next_prompt_index
-                        next_prompt_index += 1
-                    did_update = True
-
-                while True:
-                    try:
-                        event = event_queue.get_nowait()
-                    except queue.Empty:
-                        break
-                    apply_iteration_event(event)
-                    did_update = True
-
-                done_iteration_futures = {future for future in remaining if future.done()}
-                if done_iteration_futures:
-                    finish_iteration_futures(done_iteration_futures, futures, remaining)
-                    did_update = True
-
-                if did_update:
-                    yield yield_state()
-                else:
-                    time.sleep(0.25)
-    else:
-        with ThreadPoolExecutor(max_workers=iteration_batch_count) as executor:
-            futures = {
-                executor.submit(iteration_worker, task_index): task_index
-                for task_index in range(1, iteration_batch_count + 1)
-            }
-            remaining = set(futures)
-
-            while remaining:
-                if should_stop("iterative"):
-                    for future in remaining:
-                        future.cancel()
-                    yield yield_state("已停止：正在等待已进入接口请求的任务返回。")
-                    return
-
+            did_update = False
+            while True:
                 try:
-                    event = event_queue.get(timeout=0.25)
+                    event = event_queue.get_nowait()
                 except queue.Empty:
-                    done = {future for future in remaining if future.done()}
-                    if not done:
-                        continue
-                    finish_iteration_futures(done, futures, remaining)
-                    yield yield_state()
-                    continue
+                    break
+                apply_iteration_event(event)
+                did_update = True
 
+            done_prompt_futures = {future for future in prompt_futures if future.done()}
+            for future in done_prompt_futures:
+                task_index = prompt_futures.pop(future)
+                try:
+                    prompt, scene, events = future.result()
+                    initial_prompt_plan[task_index] = prompt
+                    initial_prompt_records[task_index] = prompt
+                    if scene:
+                        used_scenes.append(scene)
+                    task_statuses[task_index] = "初始提示词已就绪"
+                    retry_line = f"\n{events[-1]}" if events else ""
+                    yield yield_state(
+                        f"随机增强：第 {task_index}/{iteration_batch_count} 组初始提示词已生成，已立即启动该组迭代；已经用过场景：{format_used_scenes(used_scenes) or '暂无'}。{retry_line}"
+                    )
+                except Exception as e:
+                    task_statuses[task_index] = "失败"
+                    failed_tasks.append((task_index, f"初始提示词生成失败：{e}"))
+                    yield yield_state(f"第 {task_index} 组初始提示词生成失败并已跳过：{e}")
+                else:
+                    future_task = executor.submit(iteration_worker, task_index)
+                    futures[future_task] = task_index
+                    remaining.add(future_task)
+
+                if next_prompt_index <= iteration_batch_count:
+                    task_statuses[next_prompt_index] = "正在串行生成增强初始提示词"
+                next_prompt_index = submit_sequential_prompt_job(
+                    prompt_executor,
+                    prompt_futures,
+                    next_prompt_index,
+                    iteration_batch_count,
+                    generate_enhanced_initial_prompt_for_task,
+                    used_scenes,
+                )
+                did_update = True
+
+            done_iteration_futures = {future for future in remaining if future.done()}
+            if done_iteration_futures:
+                finish_iteration_futures(done_iteration_futures, futures, remaining)
+                did_update = True
+
+            if did_update:
+                yield yield_state()
+            else:
+                try:
+                    event = event_queue.get(timeout=0.1)
+                except queue.Empty:
+                    continue
                 apply_iteration_event(event)
                 yield yield_state()
 
@@ -3615,6 +3624,7 @@ def save_settings(
     seedream_base_url,
     seedream_model_id,
     seedream_api_key,
+    seedream_interface_format,
     seedream_response_format,
     seedream_output_format,
     seedream_watermark,
@@ -3641,6 +3651,7 @@ def save_settings(
     image_request_delay = normalize_image_request_delay(image_request_delay)
     quality = normalize_quality(quality)
     seedream_model_id = normalize_seedream_model_id(seedream_model_id)
+    seedream_interface_format = normalize_seedream_interface_format(seedream_interface_format)
     seedream_response_format = normalize_seedream_response_format(seedream_response_format)
     seedream_output_format = normalize_seedream_output_format(seedream_output_format)
     seedream_watermark = normalize_seedream_watermark(seedream_watermark)
@@ -3685,6 +3696,7 @@ def save_settings(
             "seedream_base_url": seedream_base_url,
             "seedream_model_id": seedream_model_id,
             "seedream_api_key": seedream_api_key,
+            "seedream_interface_format": seedream_interface_format,
             "seedream_response_format": seedream_response_format,
             "seedream_output_format": seedream_output_format,
             "seedream_watermark": seedream_watermark,
@@ -3761,6 +3773,7 @@ def load_ui_state():
         latest_config["api_key"],
         latest_config["seedream_base_url"],
         latest_config["seedream_model_id"],
+        latest_config["seedream_interface_format"],
         latest_config["seedream_response_format"],
         latest_config["seedream_output_format"],
         latest_config["seedream_watermark"],
@@ -4485,7 +4498,7 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                             )
 
                         with gr.Accordion("Seedream 接口", open=False):
-                            gr.HTML('<div class="mode-note">用途：调用火山方舟豆包 Seedream 图片生成接口。示例：https://ark.cn-beijing.volces.com/api/v3 或完整 /images/generations 地址；在各模式中选择“豆包 Seedream”后生效。</div>')
+                            gr.HTML('<div class="mode-note">官方方舟格式使用 /api/v3/images/generations；OpenAI 兼容中转格式复用 /v1/images/generations 与 /v1/images/edits。中转站地址可填写域名根地址或 /v1。</div>')
                             settings_seedream_base_url_input = gr.Textbox(label="API 地址", value=CONFIG["seedream_base_url"])
                             settings_seedream_model_id_input = gr.Dropdown(
                                 label="模型 ID",
@@ -4493,6 +4506,11 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                                 value=normalize_seedream_model_id(CONFIG["seedream_model_id"]),
                                 allow_custom_value=True,
                                 info="根据模型 ID 自动识别 Pro/Lite；Lite 兼容 doubao-seedream-5-0-260128。",
+                            )
+                            settings_seedream_interface_format_input = gr.Dropdown(
+                                label="接口格式",
+                                choices=SEEDREAM_INTERFACE_FORMAT_PRESETS,
+                                value=normalize_seedream_interface_format(CONFIG["seedream_interface_format"]),
                             )
                             with gr.Row():
                                 settings_seedream_response_format_input = gr.Dropdown(
@@ -4891,6 +4909,7 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
         settings_api_key_input,
         settings_seedream_base_url_input,
         settings_seedream_model_id_input,
+        settings_seedream_interface_format_input,
         settings_seedream_response_format_input,
         settings_seedream_output_format_input,
         settings_seedream_watermark_input,
@@ -4927,6 +4946,7 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
             settings_seedream_base_url_input,
             settings_seedream_model_id_input,
             settings_seedream_api_key_input,
+            settings_seedream_interface_format_input,
             settings_seedream_response_format_input,
             settings_seedream_output_format_input,
             settings_seedream_watermark_input,

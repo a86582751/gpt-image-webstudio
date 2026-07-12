@@ -164,7 +164,7 @@ pip install -r requirements.txt
 
 如果图片接口请求经常断开，可以降低图片并发数量，或者检查代理软件是否影响长连接。
 
-如果中转站对并发较敏感，可以在“设置 -> 重试设置”里调高“生图并发间隔秒”。它控制文生图、图生图和批量自我迭代中图片请求的启动节奏，不等同于失败后的重试间隔。
+如果中转站对并发较敏感，可以在“设置 -> 重试设置”里调高“生图并发间隔秒”。它控制文生图、图生图和批量自我迭代中图片请求的启动节奏，不等同于失败后的重试间隔。固定批量任务采用完成即补位的有界并发调度，例如生成 20 张、图片并发 5 时，会持续维持最多 5 个运行槽位，不会等待同一批 5 张全部结束后再启动下一批。
 
 ## 接口说明
 
@@ -194,12 +194,17 @@ https://example.com/v1/images/edits
 
 用于调用火山方舟豆包 Seedream 图片生成接口。进入“设置 -> Seedream 接口”填写：
 
+- 接口格式：`官方方舟` 或 `OpenAI 兼容中转`
 - API 地址，例如 `https://ark.cn-beijing.volces.com/api/v3`
 - 模型 ID，例如 `doubao-seedream-5-0-pro-260628` 或 `doubao-seedream-5-0-lite-260128`
 - API Key
 - 返回格式、输出格式和水印选项
 
 在手动、图生图、随机、创意和自我迭代模式中，把“模型选择”切换为“豆包 Seedream”后生效。
+
+`官方方舟`保持原有调用方式：文生图和图生图都通过 JSON 请求 `/api/v3/images/generations`，参考图以 data URL 传入。
+
+`OpenAI 兼容中转`复用 GPT Image 的接口路径：文生图使用 `/v1/images/generations`，图生图使用 multipart `/v1/images/edits`。中转站 API 地址可以填写域名根地址（例如 `https://api.example.com`）、`/v1` 地址或完整接口地址。该模式继续使用 Seedream 的模型 ID、尺寸映射和水印设置，但不会发送 GPT 专属的 `moderation`、`quality` 或 `input_fidelity` 参数。
 
 Seedream 的尺寸规则和 GPT Image 独立处理：程序会直接根据模型 ID 自动识别 Pro/Lite，不再单独维护“模型版本”字段。
 

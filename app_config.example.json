@@ -15,6 +15,7 @@
   "image_model_provider": "GPT Image",
   "quality": "auto",
   "seedream_response_format": "url",
+  "seedream_interface_format": "官方方舟",
   "seedream_output_format": "自动",
   "seedream_watermark": "关闭",
   "edit_input_fidelity": "high",
