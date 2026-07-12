@@ -3,14 +3,7 @@ import time
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from .config import should_stop
-from .core import is_remote_disconnected_error, normalize_image_request_delay
-
-def format_duration(seconds):
-    if seconds < 60:
-        return f"{seconds:.1f} 秒"
-    minutes = int(seconds // 60)
-    rest_seconds = seconds % 60
-    return f"{minutes} 分 {rest_seconds:.1f} 秒"
+from .core import format_duration, is_remote_disconnected_error, normalize_image_request_delay
 
 
 def run_with_retry(action, label, retries=1, delay_seconds=2, on_retry=None):
@@ -79,7 +72,13 @@ def run_bounded_concurrent_jobs(jobs, concurrency, worker, index_getter, stop_mo
                 return
 
             done, _pending = wait(set(future_to_index), return_when=FIRST_COMPLETED)
+            completed = []
             for future in done:
                 job_index = future_to_index.pop(future)
+                completed.append((job_index, future))
+
+            for _job_index, _future in completed:
                 submit_next()
+
+            for job_index, future in completed:
                 yield job_index, future, False

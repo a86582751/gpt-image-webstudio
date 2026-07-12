@@ -1,6 +1,7 @@
 import ast
 import os
 import re
+import threading
 import time
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from env_loader import load_local_env, update_local_env
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+CONFIG_LOCK = threading.RLock()
 
 load_local_env()
 
@@ -317,15 +319,16 @@ EDIT_INPUT_JPEG_QUALITY = 92
 
 def persist_config(updates):
     """Persist UI state and keep the in-memory config aligned for later callbacks."""
-    persisted_updates = {key: value for key, value in updates.items() if key not in ENV_CONFIG_FIELDS}
-    if persisted_updates:
-        config = load_config(DEFAULT_CONFIG)
-        config.update(persisted_updates)
-        for env_key in ENV_CONFIG_FIELDS:
-            config.pop(env_key, None)
-        config.pop("seedream_model_version", None)
-        save_config(config)
-    CONFIG.update(updates)
+    with CONFIG_LOCK:
+        persisted_updates = {key: value for key, value in updates.items() if key not in ENV_CONFIG_FIELDS}
+        if persisted_updates:
+            config = load_config(DEFAULT_CONFIG)
+            config.update(persisted_updates)
+            for env_key in ENV_CONFIG_FIELDS:
+                config.pop(env_key, None)
+            config.pop("seedream_model_version", None)
+            save_config(config)
+        CONFIG.update(updates)
 
 
 def reset_stop_flag(mode):

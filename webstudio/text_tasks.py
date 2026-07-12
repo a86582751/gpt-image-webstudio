@@ -1,32 +1,29 @@
-import base64
-import json
 import os
 import re
-import time
-from pathlib import Path
 
 import requests
 
-from .config import *
-from .core import *
+from .config import (
+    CONFIG,
+    ITERATION_OPTIMIZER_PROMPT,
+    RANDOM_SCENE_SUMMARY_PROMPT,
+    RANDOM_SYSTEM_PROMPT,
+    RANDOM_USER_PROMPT,
+    TEXT_READ_TIMEOUT,
+    VISION_READ_TIMEOUT,
+    render_prompt_template,
+    template_has_variables,
+)
+from .core import (
+    apply_reasoning_settings,
+    gemini_headers,
+    parse_text_model_content,
+    prepare_vision_image,
+    request_timeout,
+    resolve_text_protocol,
+    resolve_vision_protocol,
+)
 from .runtime import run_with_retry
-
-def build_seedream_payload(prompt, size, model_id, aspect_ratio, response_format="url", output_format="自动", watermark="关闭", input_images=None):
-    payload = {
-        "model": model_id.strip(),
-        "prompt": build_seedream_prompt(prompt, aspect_ratio),
-        "size": size,
-        "response_format": normalize_seedream_response_format(response_format),
-        "watermark": seedream_watermark_enabled(watermark),
-    }
-    output_format = normalize_seedream_output_format(output_format)
-    if output_format != "自动":
-        payload["output_format"] = output_format
-    if input_images:
-        image_values = [image["data_url"] for image in input_images]
-        payload["image"] = image_values[0] if len(image_values) == 1 else image_values
-    return payload
-
 
 def optimize_prompt_with_image(
     prompt,

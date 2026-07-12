@@ -1,14 +1,63 @@
 import base64
 import os
-import threading
 import time
-from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from io import BytesIO
 
 import requests
 
-from .config import *
-from .core import *
+from .config import IMAGE_READ_TIMEOUT, INPUT_FIDELITY_PRESETS, should_stop
+from .core import (
+    build_gallery_items,
+    build_seedream_prompt,
+    format_bytes,
+    format_failed_jobs_summary,
+    format_generation_stats,
+    get_image_dimensions,
+    get_save_dir,
+    normalize_image_model_provider,
+    normalize_image_request_delay,
+    normalize_quality,
+    normalize_seedream_output_format,
+    normalize_seedream_response_format,
+    parse_image_items,
+    post_json,
+    prepare_edit_input_image,
+    prepare_seedream_input_image,
+    request_timeout,
+    resolve_api_url,
+    resolve_edit_api_url,
+    resolve_image_request_size,
+    resolve_seedream_api_url,
+    seedream_uses_official_interface,
+    seedream_watermark_enabled,
+)
 from .runtime import ImageRequestLaunchGate, format_duration, run_bounded_concurrent_jobs, run_with_retry
+
+
+def build_seedream_payload(
+    prompt,
+    size,
+    model_id,
+    aspect_ratio,
+    response_format="url",
+    output_format="自动",
+    watermark="关闭",
+    input_images=None,
+):
+    payload = {
+        "model": model_id.strip(),
+        "prompt": build_seedream_prompt(prompt, aspect_ratio),
+        "size": size,
+        "response_format": normalize_seedream_response_format(response_format),
+        "watermark": seedream_watermark_enabled(watermark),
+    }
+    output_format = normalize_seedream_output_format(output_format)
+    if output_format != "自动":
+        payload["output_format"] = output_format
+    if input_images:
+        image_values = [image["data_url"] for image in input_images]
+        payload["image"] = image_values[0] if len(image_values) == 1 else image_values
+    return payload
 
 def is_http_url(value):
     return isinstance(value, str) and value.startswith(("http://", "https://"))

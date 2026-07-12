@@ -1,11 +1,16 @@
+import builtins
+import dis
+import inspect
 import unittest
 import threading
 import time
+import types
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import app
-from webstudio import text_tasks
+from webstudio import config, core, image_tasks, runtime, settings, text_tasks, ui
+from webstudio.workflows import creative, edit, iterative, manual, random, reverse
 
 
 class ReasoningSettingsTest(unittest.TestCase):
@@ -78,6 +83,73 @@ class SeedreamInterfaceFormatTest(unittest.TestCase):
             self.assertFalse(app.seedream_uses_official_interface())
         finally:
             app.CONFIG["seedream_interface_format"] = old_value
+
+    def test_official_payload_builder_is_available_in_image_task_layer(self):
+        payload = image_tasks.build_seedream_payload(
+            "测试提示词",
+            "2560x1440",
+            "doubao-seedream-5-0-pro-260628",
+            "16:9 宽屏",
+            output_format="png",
+            watermark="开启",
+        )
+        self.assertEqual(payload["size"], "2560x1440")
+        self.assertEqual(payload["output_format"], "png")
+        self.assertTrue(payload["watermark"])
+
+    def test_seedream_relay_edit_builds_multipart_files(self):
+        old_value = app.CONFIG.get("seedream_interface_format")
+        captured = {}
+
+        def fake_post(*_args, **kwargs):
+            captured.update(kwargs)
+            return object()
+
+        def fake_save(_items, saved_paths, *_args, **_kwargs):
+            saved_paths.append("result.png")
+
+        try:
+            app.CONFIG["seedream_interface_format"] = "OpenAI 兼容中转"
+            with patch.object(
+                image_tasks,
+                "prepare_seedream_input_image",
+                return_value={
+                    "filename": "input.png",
+                    "bytes": b"image-bytes",
+                    "mime_type": "image/png",
+                    "data_url": "data:image/png;base64,aW1hZ2UtYnl0ZXM=",
+                },
+            ), patch.object(image_tasks.requests, "post", side_effect=fake_post), patch.object(
+                image_tasks, "parse_image_items", return_value=[{"b64_json": "ignored"}]
+            ), patch.object(image_tasks, "save_images_from_items", side_effect=fake_save):
+                result, _prepared = image_tasks.generate_one_image_edit(
+                    "测试编辑",
+                    ["input.png"],
+                    ".",
+                    "1:1 正方形",
+                    "高清",
+                    "豆包 Seedream",
+                    "https://gpt.example.com",
+                    "gpt-image-2",
+                    "high",
+                    "gpt-key",
+                    "https://relay.example.com",
+                    "doubao-seedream-5-0-pro-260628",
+                    "seedream-key",
+                    "url",
+                    "自动",
+                    "关闭",
+                    "high",
+                    "test",
+                    retry_count=0,
+                )
+        finally:
+            app.CONFIG["seedream_interface_format"] = old_value
+
+        self.assertEqual(result, "result.png")
+        self.assertEqual(captured["data"]["model"], "doubao-seedream-5-0-pro-260628")
+        self.assertEqual(captured["files"][0][0], "image[]")
+        self.assertEqual(captured["files"][0][1][1].getvalue(), b"image-bytes")
 
 
 class SharedPromptJobTest(unittest.TestCase):
@@ -181,6 +253,55 @@ class BatchConcurrencyTest(unittest.TestCase):
         launch_times.sort()
         gaps = [later - earlier for earlier, later in zip(launch_times, launch_times[1:])]
         self.assertTrue(all(gap >= 0.012 for gap in gaps), gaps)
+
+
+class RefactorSmokeTest(unittest.TestCase):
+    def test_generation_stats_can_format_durations(self):
+        summary = core.format_generation_stats([], 2, 65, "1024x1024")
+        self.assertIn("总耗时 1 分 5.0 秒", summary)
+
+    def test_iteration_source_ui_callback_has_gradio_dependency(self):
+        preference_update, prompt_update = ui.update_iteration_source_ui("自定义提示词")
+        self.assertEqual(preference_update["label"], "创作主题")
+        self.assertTrue(prompt_update["interactive"])
+
+    def test_module_functions_have_no_unbound_global_dependencies(self):
+        modules = [
+            config,
+            core,
+            image_tasks,
+            runtime,
+            settings,
+            text_tasks,
+            ui,
+            creative,
+            edit,
+            iterative,
+            manual,
+            random,
+            reverse,
+        ]
+        missing = []
+
+        def walk_code(code):
+            yield code
+            for value in code.co_consts:
+                if isinstance(value, types.CodeType):
+                    yield from walk_code(value)
+
+        for module in modules:
+            available = set(vars(module)) | set(dir(builtins))
+            for function_name, function in vars(module).items():
+                if not inspect.isfunction(function) or function.__module__ != module.__name__:
+                    continue
+                for code in walk_code(function.__code__):
+                    for instruction in dis.get_instructions(code):
+                        if instruction.opname in ("LOAD_GLOBAL", "LOAD_NAME") and instruction.argval not in available:
+                            missing.append(
+                                f"{module.__name__}.{function_name}/{code.co_name}: {instruction.argval}"
+                            )
+
+        self.assertEqual(missing, [])
 
 
 if __name__ == "__main__":

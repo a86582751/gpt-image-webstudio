@@ -9,7 +9,27 @@ from urllib.parse import urlparse
 import requests
 from PIL import Image
 
-from .config import *
+from .config import (
+    ASPECT_RATIOS,
+    CONFIG,
+    CONNECT_TIMEOUT,
+    EDIT_INPUT_COMPRESS_THRESHOLD,
+    EDIT_INPUT_JPEG_QUALITY,
+    EDIT_INPUT_MAX_SIDE,
+    IMAGE_MODEL_PRESETS,
+    ITERATION_PROMPT_SOURCE_PRESETS,
+    MODEL_PROTOCOL_PRESETS,
+    QUALITY_PRESETS,
+    REASONING_EFFORT_PRESETS,
+    RESOLUTION_PRESETS,
+    SEEDREAM_INTERFACE_FORMAT_PRESETS,
+    SEEDREAM_OUTPUT_FORMAT_PRESETS,
+    SEEDREAM_RESPONSE_FORMAT_PRESETS,
+    SEEDREAM_WATERMARK_PRESETS,
+    VISION_IMAGE_JPEG_QUALITY,
+    VISION_IMAGE_MAX_SIDE,
+    seedream_model_family,
+)
 
 def resolve_size(aspect_ratio, resolution):
     ratio_sizes = ASPECT_RATIOS.get(aspect_ratio, ASPECT_RATIOS["4:3 横图"])
@@ -150,24 +170,6 @@ def normalize_iteration_prompt_source(source):
 def normalize_reasoning_effort(effort):
     effort = (effort or "关闭").strip()
     return effort if effort in REASONING_EFFORT_PRESETS else "关闭"
-
-
-def update_iteration_source_ui(source):
-    source = normalize_iteration_prompt_source(source)
-    is_custom = source == "自定义提示词"
-    preference_label = "创作主题" if is_custom else "初始创作方向"
-    preference_placeholder = "例如：课堂午睡、雨夜车站、便利店夜班" if is_custom else "例如：白色丝袜、雨夜车站、图书馆"
-    custom_prompt_label = "初始提示词（点击输入你需要的提示词）" if is_custom else "初始提示词（由文本模型随机生成）"
-    custom_prompt_placeholder = "像手动模式一样输入第 1 轮要使用的完整提示词" if is_custom else "等待提示词生成"
-    return (
-        gr.update(label=preference_label, placeholder=preference_placeholder),
-        gr.update(
-            label=custom_prompt_label,
-            placeholder=custom_prompt_placeholder,
-            value=None if is_custom else "",
-            interactive=is_custom,
-        ),
-    )
 
 
 def normalize_retry_settings(retry_count, retry_delay):
@@ -566,6 +568,14 @@ def format_resolution_summary(image_records, fallback_size):
 
     details = "，".join(f"第 {index} 张 {dimensions}" for index, dimensions in dimensions_by_index)
     return f"图片分辨率：{details}"
+
+
+def format_duration(seconds):
+    if seconds < 60:
+        return f"{seconds:.1f} 秒"
+    minutes = int(seconds // 60)
+    rest_seconds = seconds % 60
+    return f"{minutes} 分 {rest_seconds:.1f} 秒"
 
 
 def format_generation_stats(image_records, requested_count, total_elapsed, fallback_size):

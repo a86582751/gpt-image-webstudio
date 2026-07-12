@@ -1,9 +1,54 @@
 import gradio as gr
 
-from .config import *
-from .core import *
-from .settings import *
-from .workflows import *
+from .config import (
+    ASPECT_RATIOS,
+    CONFIG,
+    IMAGE_MODEL_PRESETS,
+    INPUT_FIDELITY_PRESETS,
+    ITERATION_PROMPT_SOURCE_PRESETS,
+    MODEL_PROTOCOL_PRESETS,
+    normalize_seedream_model_id,
+    QUALITY_PRESETS,
+    REASONING_EFFORT_PRESETS,
+    RESOLUTION_PRESETS,
+    SEEDREAM_INTERFACE_FORMAT_PRESETS,
+    SEEDREAM_MODEL_ID_PRESETS,
+    SEEDREAM_OUTPUT_FORMAT_PRESETS,
+    SEEDREAM_RESPONSE_FORMAT_PRESETS,
+    SEEDREAM_WATERMARK_PRESETS,
+    request_stop,
+)
+from .core import (
+    normalize_iteration_prompt_source,
+    normalize_seedream_interface_format,
+)
+from .settings import load_ui_state, save_settings
+from .workflows import (
+    generate_creative_images,
+    generate_image,
+    generate_image_edit,
+    generate_iterative_image,
+    generate_random_image,
+    reverse_prompt_from_image,
+)
+
+
+def update_iteration_source_ui(source):
+    source = normalize_iteration_prompt_source(source)
+    is_custom = source == "自定义提示词"
+    preference_label = "创作主题" if is_custom else "初始创作方向"
+    preference_placeholder = "例如：课堂午睡、雨夜车站、便利店夜班" if is_custom else "例如：白色丝袜、雨夜车站、图书馆"
+    custom_prompt_label = "初始提示词（点击输入你需要的提示词）" if is_custom else "初始提示词（由文本模型随机生成）"
+    custom_prompt_placeholder = "像手动模式一样输入第 1 轮要使用的完整提示词" if is_custom else "等待提示词生成"
+    return (
+        gr.update(label=preference_label, placeholder=preference_placeholder),
+        gr.update(
+            label=custom_prompt_label,
+            placeholder=custom_prompt_placeholder,
+            value=None if is_custom else "",
+            interactive=is_custom,
+        ),
+    )
 
 theme = gr.themes.Soft(
     primary_hue="indigo",
