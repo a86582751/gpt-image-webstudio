@@ -16,7 +16,7 @@ def run_with_retry(action, label, retries=1, delay_seconds=2, on_retry=None):
         log_debug("请求", "开始尝试", operation=label, attempt=attempt_number, max_attempts=retries + 1)
         try:
             result = action()
-            log_event(
+            log_debug(
                 "请求",
                 "完成",
                 operation=label,

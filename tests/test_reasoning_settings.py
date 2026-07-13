@@ -1,6 +1,7 @@
 import builtins
 import dis
 import inspect
+import logging
 import tempfile
 import unittest
 import threading
@@ -412,6 +413,14 @@ class RefactorSmokeTest(unittest.TestCase):
         self.assertEqual(logging_utils._format_field("api_key", "secret-value"), "***")
         self.assertEqual(logging_utils._format_field("Authorization", "Bearer secret"), "***")
         self.assertEqual(logging_utils._format_field("model", "test-model"), "test-model")
+
+    def test_successful_low_level_request_log_is_debug_only(self):
+        with patch.object(logging_utils.LOGGER, "log") as logger_log:
+            self.assertEqual(runtime.run_with_retry(lambda: "ok", "测试请求", retries=0), "ok")
+
+        levels = [call.args[0] for call in logger_log.call_args_list]
+        self.assertTrue(levels)
+        self.assertTrue(all(level == logging.DEBUG for level in levels))
 
 
 class PromptHistoryTest(unittest.TestCase):

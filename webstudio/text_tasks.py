@@ -188,13 +188,15 @@ def optimize_prompt_with_image(
             )
         return parse_text_model_content(protocol, response)
 
-    return run_with_retry(
+    content = run_with_retry(
         request_vision,
         "视觉评估优化",
         retries=int(retry_count),
         delay_seconds=float(retry_delay),
         on_retry=on_retry,
     )
+    log_event("多模态", "图片评估完成", model=model_id, protocol=protocol)
+    return content
 
 
 def request_multimodal_text(
@@ -343,6 +345,7 @@ def request_multimodal_text(
         delay_seconds=float(retry_delay),
         on_retry=on_retry,
     )
+    log_event("多模态", "图片读取完成", model=model_id, protocol=protocol, operation=label)
     return content, vision_image, protocol, request_url
 
 
