@@ -133,6 +133,7 @@ DEFAULT_CONFIG = {
     "retry_count": 1,
     "retry_delay": 2,
     "image_request_delay": 0,
+    "save_prompt_history": False,
     "aspect_ratio": "4:3 横图",
     "resolution": "高清",
     "image_model_provider": "GPT Image",
@@ -301,6 +302,7 @@ def normalize_config(config):
     config["iteration_batch_count"] = min(10, max(1, int(config.get("iteration_batch_count") or DEFAULT_CONFIG["iteration_batch_count"])))
     config["iteration_text_concurrency"] = min(10, max(1, int(config.get("iteration_text_concurrency") or DEFAULT_CONFIG["iteration_text_concurrency"])))
     config["iteration_image_concurrency"] = min(10, max(1, int(config.get("iteration_image_concurrency") or DEFAULT_CONFIG["iteration_image_concurrency"])))
+    config["save_prompt_history"] = bool(config.get("save_prompt_history", DEFAULT_CONFIG["save_prompt_history"]))
     return config
 
 

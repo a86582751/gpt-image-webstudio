@@ -48,6 +48,7 @@ def save_settings(
     retry_count,
     retry_delay,
     image_request_delay,
+    save_prompt_history,
     random_system_prompt,
     random_user_prompt,
     random_scene_summary_prompt,
@@ -120,6 +121,7 @@ def save_settings(
             "retry_count": retry_count,
             "retry_delay": retry_delay,
             "image_request_delay": image_request_delay,
+            "save_prompt_history": bool(save_prompt_history),
         },
     )
     CONFIG.update(prompt_config_values())
@@ -198,6 +200,7 @@ def load_ui_state():
         latest_config["retry_count"],
         latest_config["retry_delay"],
         latest_config["image_request_delay"],
+        latest_config["save_prompt_history"],
         latest_config["random_system_prompt"],
         latest_config["random_user_prompt"],
         latest_config["random_scene_summary_prompt"],

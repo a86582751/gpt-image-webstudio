@@ -728,6 +728,11 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                             value=CONFIG["save_dir"],
                             placeholder="留空则保存到当前项目的 AI_Cards 文件夹",
                         )
+                        settings_save_prompt_history_input = gr.Checkbox(
+                            label="保存每次文生图提示词",
+                            value=CONFIG["save_prompt_history"],
+                            info="保存到图片输出目录的 prompt_history.md；创意模式按批次记录，自我迭代只记录每组最终提示词。",
+                        )
                         with gr.Accordion("图片生成接口", open=True):
                             gr.HTML('<div class="mode-note">用途：生成图片。支持 OpenAI Images 兼容接口。示例：https://example.com 或 https://example.com/v1/images/generations</div>')
                             settings_base_url_input = gr.Textbox(label="API 地址", value=CONFIG["base_url"])
@@ -845,7 +850,6 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
                                     step=1,
                                     info="只影响文生图和图生图的并发启动节奏，用于避开中转站限流；不等同于失败后的重试间隔。",
                                 )
-
                     with gr.Column(scale=1, min_width=420):
                         gr.HTML('<div class="mode-note">提示词模板支持变量：{{date}}、{{time}}、{{datetime}}、{{preference}}、{{used_scenes}}；场景概述模板支持 {{prompt}}；视觉迭代还支持 {{current_prompt}}、{{creation_theme}}、{{user_initial_direction}}、{{image}}。</div>')
                         settings_random_system_prompt_input = gr.Textbox(
@@ -1173,6 +1177,7 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
         settings_retry_count_input,
         settings_retry_delay_input,
         settings_image_request_delay_input,
+        settings_save_prompt_history_input,
         settings_random_system_prompt_input,
         settings_random_user_prompt_input,
         settings_random_scene_summary_prompt_input,
@@ -1209,6 +1214,7 @@ with gr.Blocks(title="GPT Image WebStudio", analytics_enabled=False) as app:
             settings_retry_count_input,
             settings_retry_delay_input,
             settings_image_request_delay_input,
+            settings_save_prompt_history_input,
             settings_random_system_prompt_input,
             settings_random_user_prompt_input,
             settings_random_scene_summary_prompt_input,

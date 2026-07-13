@@ -28,6 +28,7 @@ from ..core import (
 )
 from ..image_tasks import generate_one_image, resolve_selected_image_config, validate_selected_image_config
 from ..logging_utils import log_event
+from ..prompt_history import save_prompt_batch
 from ..runtime import ImageRequestLaunchGate, format_duration
 from ..text_tasks import (
     format_used_scenes,
@@ -126,6 +127,7 @@ def generate_iterative_image(
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     total_started_at = time.perf_counter()
     final_records = []
+    final_prompt_records = {}
     process_records = []
     image_records = []
     prompt_histories = {}
@@ -391,6 +393,7 @@ def generate_iterative_image(
             task_statuses[task_index] = f"第 {event['round_index']}/{iteration_count} 轮图片完成，{dimensions}，耗时 {format_duration(event['elapsed'])}"
         elif kind == "done":
             task_statuses[task_index] = "完成"
+            final_prompt_records[task_index] = event["final_prompt"]
             persist_config({"prompt": event["final_prompt"]})
 
     def finish_iteration_futures(done_futures, futures, remaining):
@@ -400,6 +403,7 @@ def generate_iterative_image(
             try:
                 final_prompt = future.result()
                 task_statuses[task_index] = "完成"
+                final_prompt_records[task_index] = final_prompt
                 persist_config({"prompt": final_prompt})
             except Exception as e:
                 message = str(e)
@@ -501,6 +505,12 @@ def generate_iterative_image(
                 yield yield_state()
 
     failed_task_summary = format_failed_jobs_summary(failed_tasks, item_label="组")
+    save_prompt_batch(
+        save_dir,
+        "自我迭代模式",
+        random_preference,
+        [final_prompt_records[index] for index in sorted(final_prompt_records)],
+    )
     log_event(
         "自我迭代",
         "任务结束",

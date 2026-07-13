@@ -14,6 +14,7 @@ from ..core import (
 )
 from ..image_tasks import generate_images_from_prompt, resolve_selected_image_config, validate_selected_image_config
 from ..logging_utils import log_event
+from ..prompt_history import save_prompt_batch
 from ..runtime import format_duration
 from ..text_tasks import generate_random_prompt_job
 
@@ -123,6 +124,7 @@ def generate_random_image(
         return
 
     persist_config({"prompt": random_prompt})
+    save_prompt_batch(save_dir, "随机模式", random_preference, [random_prompt])
     prompt_status_extra = f"\n{prompt_events[-1]}" if prompt_events else ""
 
     yield (

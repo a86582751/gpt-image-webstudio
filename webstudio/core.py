@@ -22,6 +22,7 @@ from .config import (
     QUALITY_PRESETS,
     REASONING_EFFORT_PRESETS,
     RESOLUTION_PRESETS,
+    ROOT_DIR,
     SEEDREAM_INTERFACE_FORMAT_PRESETS,
     SEEDREAM_OUTPUT_FORMAT_PRESETS,
     SEEDREAM_RESPONSE_FORMAT_PRESETS,
@@ -496,8 +497,7 @@ def resolve_vision_protocol(base_url, model_id, protocol_choice):
 def get_save_dir(save_dir):
     save_dir = (save_dir or "").strip()
     if not save_dir:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.join(script_dir, "AI_Cards")
+        return str(ROOT_DIR / "AI_Cards")
     return save_dir
 
 

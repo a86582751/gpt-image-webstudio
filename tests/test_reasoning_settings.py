@@ -1,15 +1,17 @@
 import builtins
 import dis
 import inspect
+import tempfile
 import unittest
 import threading
 import time
 import types
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from unittest.mock import patch
 
 import app
-from webstudio import config, core, image_tasks, logging_utils, runtime, settings, text_tasks, ui
+from webstudio import config, core, image_tasks, logging_utils, prompt_history, runtime, settings, text_tasks, ui
 from webstudio.workflows import creative, edit, iterative, manual, random, reverse
 
 
@@ -271,6 +273,7 @@ class RefactorSmokeTest(unittest.TestCase):
             core,
             image_tasks,
             logging_utils,
+            prompt_history,
             runtime,
             settings,
             text_tasks,
@@ -308,6 +311,49 @@ class RefactorSmokeTest(unittest.TestCase):
         self.assertEqual(logging_utils._format_field("api_key", "secret-value"), "***")
         self.assertEqual(logging_utils._format_field("Authorization", "Bearer secret"), "***")
         self.assertEqual(logging_utils._format_field("model", "test-model"), "test-model")
+
+
+class PromptHistoryTest(unittest.TestCase):
+    def test_default_image_and_prompt_history_directories_match(self):
+        self.assertEqual(
+            prompt_history.resolve_prompt_history_path("").parent,
+            Path(core.get_save_dir("")),
+        )
+
+    def test_disabled_history_does_not_create_file(self):
+        old_value = app.CONFIG.get("save_prompt_history")
+        try:
+            app.CONFIG["save_prompt_history"] = False
+            with tempfile.TemporaryDirectory() as temp_dir:
+                result = prompt_history.save_prompt_batch(temp_dir, "随机模式", "雨夜", ["提示词一"])
+                self.assertIsNone(result)
+                self.assertFalse(prompt_history.resolve_prompt_history_path(temp_dir).exists())
+        finally:
+            app.CONFIG["save_prompt_history"] = old_value
+
+    def test_creative_batch_is_saved_as_one_markdown_record(self):
+        old_value = app.CONFIG.get("save_prompt_history")
+        try:
+            app.CONFIG["save_prompt_history"] = True
+            with tempfile.TemporaryDirectory() as temp_dir:
+                result = prompt_history.save_prompt_batch(
+                    temp_dir,
+                    "创意模式",
+                    "雨夜校园",
+                    ["第一段完整提示词", "第二段完整提示词", "第三段完整提示词"],
+                )
+                content = prompt_history.resolve_prompt_history_path(temp_dir).read_text(encoding="utf-8")
+        finally:
+            app.CONFIG["save_prompt_history"] = old_value
+
+        self.assertEqual(result, str(prompt_history.resolve_prompt_history_path(temp_dir)))
+        self.assertEqual(sum(line.startswith("## ") for line in content.splitlines()), 1)
+        self.assertIn("｜创意模式", content)
+        self.assertIn("**创作方向：** 雨夜校园", content)
+        self.assertIn("### 提示词 1", content)
+        self.assertIn("### 提示词 3", content)
+        self.assertNotIn("模型：", content)
+        self.assertNotIn("任务编号", content)
 
 
 if __name__ == "__main__":

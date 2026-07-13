@@ -21,6 +21,7 @@ from ..core import (
 )
 from ..image_tasks import generate_one_image, resolve_selected_image_config, validate_selected_image_config
 from ..logging_utils import log_error, log_event
+from ..prompt_history import save_prompt_batch
 from ..runtime import ImageRequestLaunchGate, format_duration
 from ..text_tasks import format_used_scenes, generate_random_prompt_job, submit_sequential_prompt_job
 
@@ -301,6 +302,12 @@ def generate_creative_images(
     prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
     prompt_failure_summary = format_failed_jobs_summary(failed_prompts, item_label="段")
     image_failure_summary = format_failed_jobs_summary(failed_images, item_label="张")
+    save_prompt_batch(
+        save_dir,
+        "创意模式",
+        random_preference,
+        [prompt for _index, prompt in sorted(prompts)],
+    )
     log_event(
         "创意模式",
         "任务结束",
