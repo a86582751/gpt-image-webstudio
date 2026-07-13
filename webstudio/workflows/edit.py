@@ -13,6 +13,7 @@ from ..image_tasks import (
     resolve_selected_image_config,
     validate_selected_image_config,
 )
+from ..logging_utils import log_event
 
 def generate_image_edit(
     uploaded_files,
@@ -39,6 +40,7 @@ def generate_image_edit(
     input_fidelity,
 ):
     reset_stop_flag("edit")
+    log_event("图生图", "任务启动", images=int(image_count), concurrency=int(concurrency), provider=image_model_provider)
     input_images = normalize_uploaded_file_paths(uploaded_files)
     if not input_images:
         yield [], "请先上传至少一张参考图。"
@@ -122,3 +124,4 @@ def generate_image_edit(
         retry_delay=retry_delay,
         image_request_delay=image_request_delay,
     )
+    log_event("图生图", "任务结束", images=int(image_count), provider=image_model_provider)

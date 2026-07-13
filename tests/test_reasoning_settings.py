@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import app
-from webstudio import config, core, image_tasks, runtime, settings, text_tasks, ui
+from webstudio import config, core, image_tasks, logging_utils, runtime, settings, text_tasks, ui
 from webstudio.workflows import creative, edit, iterative, manual, random, reverse
 
 
@@ -270,6 +270,7 @@ class RefactorSmokeTest(unittest.TestCase):
             config,
             core,
             image_tasks,
+            logging_utils,
             runtime,
             settings,
             text_tasks,
@@ -302,6 +303,11 @@ class RefactorSmokeTest(unittest.TestCase):
                             )
 
         self.assertEqual(missing, [])
+
+    def test_console_log_fields_redact_secrets(self):
+        self.assertEqual(logging_utils._format_field("api_key", "secret-value"), "***")
+        self.assertEqual(logging_utils._format_field("Authorization", "Bearer secret"), "***")
+        self.assertEqual(logging_utils._format_field("model", "test-model"), "test-model")
 
 
 if __name__ == "__main__":

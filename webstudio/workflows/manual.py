@@ -8,6 +8,7 @@ from ..core import (
     normalize_seedream_watermark,
 )
 from ..image_tasks import generate_images_from_prompt, resolve_selected_image_config, validate_selected_image_config
+from ..logging_utils import log_event
 
 def generate_image(
     prompt,
@@ -32,6 +33,7 @@ def generate_image(
     seedream_watermark,
 ):
     reset_stop_flag("manual")
+    log_event("手动模式", "任务启动", images=int(image_count), concurrency=int(concurrency), provider=image_model_provider)
     if not prompt or not prompt.strip():
         yield [], "请先输入提示词。"
         return
@@ -105,3 +107,4 @@ def generate_image(
         image_request_delay=image_request_delay,
         stop_mode="manual",
     )
+    log_event("手动模式", "任务结束", images=int(image_count), provider=image_model_provider)

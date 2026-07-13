@@ -7,12 +7,14 @@ from pathlib import Path
 
 from config_store import load_config, save_config
 from env_loader import load_local_env, update_local_env
+from .logging_utils import configure_logging, log_debug, log_event
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_LOCK = threading.RLock()
 
 load_local_env()
+configure_logging()
 
 from prompt_templates import (
     ITERATION_OPTIMIZER_PROMPT,
@@ -329,6 +331,7 @@ def persist_config(updates):
             config.pop("seedream_model_version", None)
             save_config(config)
         CONFIG.update(updates)
+    log_debug("配置", "状态已保存", fields=len(updates))
 
 
 def reset_stop_flag(mode):
@@ -337,6 +340,7 @@ def reset_stop_flag(mode):
 
 def request_stop(mode):
     STOP_FLAGS[mode] = True
+    log_event("任务控制", "收到停止请求", mode=mode)
     return "已请求停止：正在取消排队任务，已开始的网络请求会在当前请求返回后停止继续。"
 
 

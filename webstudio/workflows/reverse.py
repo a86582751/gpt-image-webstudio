@@ -11,6 +11,7 @@ from ..core import (
 )
 from ..runtime import format_duration
 from ..text_tasks import request_multimodal_text, resolve_reverse_image_path
+from ..logging_utils import log_error, log_event
 
 
 def reverse_prompt_from_image(
@@ -25,6 +26,7 @@ def reverse_prompt_from_image(
     retry_delay,
 ):
     reset_stop_flag("reverse")
+    log_event("提示词反推", "任务启动", model=iteration_model_id, protocol=iteration_protocol)
     retry_count, retry_delay = normalize_retry_settings(retry_count, retry_delay)
     iteration_protocol = normalize_protocol(iteration_protocol)
     iteration_reasoning_effort = normalize_reasoning_effort(iteration_reasoning_effort)
@@ -50,9 +52,17 @@ def reverse_prompt_from_image(
             "提示词反推",
         )
     except Exception as error:
+        log_error("提示词反推", "任务失败", model=iteration_model_id, error=error)
         return "", f"提示词反推失败：{error}"
 
     status_extra = f"\n{retry_events[-1]}" if retry_events else ""
+    log_event(
+        "提示词反推",
+        "任务结束",
+        model=iteration_model_id,
+        protocol=format_protocol_label(protocol),
+        elapsed=format_duration(time.perf_counter() - started_at),
+    )
     return (
         result,
         f"反推完成；协议：{format_protocol_label(protocol)}；地址：{display_endpoint(request_url)}；上传图片 {format_bytes(vision_image['original_size'])} -> {format_bytes(vision_image['compressed_size'])}，{vision_image['dimensions']}；耗时 {format_duration(time.perf_counter() - started_at)}{status_extra}",

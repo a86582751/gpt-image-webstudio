@@ -268,6 +268,24 @@ doubao-seedream-5-0-lite-260128
 
 图生图上传的参考图如果单张大于 2.5MB，也会先创建一份压缩后的上传副本，不影响本地原图。
 
+## 控制台运行日志
+
+应用默认在启动窗口输出结构化运行日志，包括模式启动、文本和多模态任务、图片请求、并发池补位、保存路径、耗时、重试与失败原因。日志不会输出 API Key 或完整提示词。
+
+```text
+2026-07-13 16:20:18 | INFO    | [创意模式] 任务启动 | images=5 | text_concurrency=2 | image_concurrency=3
+2026-07-13 16:20:20 | INFO    | [图片生成] 准备请求 | provider=豆包 Seedream | model=doubao-seedream-5-0-pro-260628 | size=2560x1440
+2026-07-13 16:21:03 | INFO    | [请求] 完成 | operation=图片生成 | attempt=1 | elapsed=43.1 秒
+```
+
+默认日志等级为 `INFO`。需要查看更细的请求尝试信息时，可以在 `.env` 中增加：
+
+```text
+WEBSTUDIO_LOG_LEVEL=DEBUG
+```
+
+可用等级为 `DEBUG`、`INFO`、`WARNING`、`ERROR`。
+
 ## 配置文件
 
 程序首次启动或保存设置后，会使用这些本地文件：

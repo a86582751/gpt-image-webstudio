@@ -20,6 +20,7 @@ from ..core import (
     resolve_image_request_size,
 )
 from ..image_tasks import generate_one_image, resolve_selected_image_config, validate_selected_image_config
+from ..logging_utils import log_error, log_event
 from ..runtime import ImageRequestLaunchGate, format_duration
 from ..text_tasks import format_used_scenes, generate_random_prompt_job, submit_sequential_prompt_job
 
@@ -53,6 +54,15 @@ def generate_creative_images(
     random_preference,
 ):
     reset_stop_flag("creative")
+    log_event(
+        "创意模式",
+        "任务启动",
+        images=int(creative_count),
+        text_concurrency=int(text_concurrency),
+        image_concurrency=int(image_concurrency),
+        random_enhance=bool(creative_random_enhance),
+        provider=image_model_provider,
+    )
     image_model_provider, _selected_base_url, selected_model_id, selected_api_key = resolve_selected_image_config(
         image_model_provider,
         image_base_url,
@@ -279,6 +289,7 @@ def generate_creative_images(
                 persist_config({"prompt": sorted(prompts)[-1][1]})
 
     except Exception as e:
+        log_error("创意模式", "调度中断", error=e, saved=len(saved_paths), prompts=len(prompts))
         prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
         yield (
             prompt_text,
@@ -290,6 +301,14 @@ def generate_creative_images(
     prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
     prompt_failure_summary = format_failed_jobs_summary(failed_prompts, item_label="段")
     image_failure_summary = format_failed_jobs_summary(failed_images, item_label="张")
+    log_event(
+        "创意模式",
+        "任务结束",
+        prompts=len(prompts),
+        saved=len(saved_paths),
+        prompt_failures=len(failed_prompts),
+        image_failures=len(failed_images),
+    )
     yield (
         prompt_text,
         build_gallery_items(saved_paths),

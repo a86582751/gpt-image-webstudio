@@ -27,6 +27,7 @@ from ..core import (
     resolve_vision_protocol,
 )
 from ..image_tasks import generate_one_image, resolve_selected_image_config, validate_selected_image_config
+from ..logging_utils import log_event
 from ..runtime import ImageRequestLaunchGate, format_duration
 from ..text_tasks import (
     format_used_scenes,
@@ -73,6 +74,16 @@ def generate_iterative_image(
     iteration_reasoning_effort,
 ):
     reset_stop_flag("iterative")
+    log_event(
+        "自我迭代",
+        "任务启动",
+        groups=int(iteration_batch_count),
+        rounds=int(iteration_count),
+        text_concurrency=int(iteration_text_concurrency),
+        image_concurrency=int(iteration_image_concurrency),
+        random_enhance=bool(iteration_random_enhance),
+        provider=image_model_provider,
+    )
     image_model_provider, _selected_base_url, selected_model_id, selected_api_key = resolve_selected_image_config(
         image_model_provider,
         image_base_url,
@@ -490,6 +501,13 @@ def generate_iterative_image(
                 yield yield_state()
 
     failed_task_summary = format_failed_jobs_summary(failed_tasks, item_label="组")
+    log_event(
+        "自我迭代",
+        "任务结束",
+        final_images=len(final_records),
+        process_images=len(process_records),
+        failed_groups=len(failed_tasks),
+    )
     yield (
         initial_prompts_text_for_ui(),
         prompt_text_for_ui(),

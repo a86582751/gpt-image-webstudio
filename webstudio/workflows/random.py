@@ -13,6 +13,7 @@ from ..core import (
     normalize_seedream_watermark,
 )
 from ..image_tasks import generate_images_from_prompt, resolve_selected_image_config, validate_selected_image_config
+from ..logging_utils import log_event
 from ..runtime import format_duration
 from ..text_tasks import generate_random_prompt_job
 
@@ -44,6 +45,7 @@ def generate_random_image(
     random_preference,
 ):
     reset_stop_flag("random")
+    log_event("随机模式", "任务启动", images=int(image_count), concurrency=int(concurrency), provider=image_model_provider)
     image_model_provider, _selected_base_url, selected_model_id, selected_api_key = resolve_selected_image_config(
         image_model_provider,
         base_url,
@@ -153,3 +155,4 @@ def generate_random_image(
         stop_mode="random",
     ):
         yield random_prompt, gallery_items, status
+    log_event("随机模式", "任务结束", images=int(image_count), provider=image_model_provider)

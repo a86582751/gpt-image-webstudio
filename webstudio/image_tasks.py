@@ -9,6 +9,7 @@ from .config import IMAGE_READ_TIMEOUT, INPUT_FIDELITY_PRESETS, should_stop
 from .core import (
     build_gallery_items,
     build_seedream_prompt,
+    display_endpoint,
     format_bytes,
     format_failed_jobs_summary,
     format_generation_stats,
@@ -32,6 +33,7 @@ from .core import (
     seedream_watermark_enabled,
 )
 from .runtime import ImageRequestLaunchGate, format_duration, run_bounded_concurrent_jobs, run_with_retry
+from .logging_utils import log_error, log_event
 
 
 def build_seedream_payload(
@@ -153,6 +155,15 @@ def generate_one_image(
     size = resolve_image_request_size(image_model_provider, aspect_ratio, resolution, active_model_id)
     quality = normalize_quality(quality)
     saved_paths = []
+    log_event(
+        "图片生成",
+        "准备请求",
+        provider=image_model_provider,
+        model=active_model_id,
+        size=size,
+        endpoint=display_endpoint(active_base_url),
+        task=timestamp,
+    )
 
     def request_image():
         if image_model_provider == "豆包 Seedream" and seedream_uses_official_interface():
@@ -221,7 +232,9 @@ def generate_one_image(
     )
     save_images_from_items(image_items, saved_paths, save_dir, timestamp, retry_count, retry_delay, on_retry)
     if not saved_paths:
+        log_error("图片生成", "接口成功但没有图片数据", provider=image_model_provider, model=active_model_id, task=timestamp)
         raise RuntimeError("接口返回成功，但没有收到图片数据。")
+    log_event("图片生成", "图片已保存", provider=image_model_provider, model=active_model_id, path=saved_paths[0], task=timestamp)
     return saved_paths[0]
 
 
@@ -260,6 +273,16 @@ def generate_one_image_edit(
         for path in input_images
     ]
     saved_paths = []
+    log_event(
+        "图片编辑",
+        "准备请求",
+        provider=image_model_provider,
+        model=active_model_id,
+        size=size,
+        inputs=len(prepared_images),
+        endpoint=display_endpoint(active_base_url),
+        task=timestamp,
+    )
 
     def request_edit():
         if image_model_provider == "豆包 Seedream" and seedream_uses_official_interface():
@@ -318,7 +341,9 @@ def generate_one_image_edit(
     )
     save_images_from_items(image_items, saved_paths, save_dir, timestamp, retry_count, retry_delay, on_retry)
     if not saved_paths:
+        log_error("图片编辑", "接口成功但没有图片数据", provider=image_model_provider, model=active_model_id, task=timestamp)
         raise RuntimeError("接口返回成功，但没有收到图片数据。")
+    log_event("图片编辑", "图片已保存", provider=image_model_provider, model=active_model_id, path=saved_paths[0], task=timestamp)
     return saved_paths[0], prepared_images
 
 def generate_images_concurrently(

@@ -24,6 +24,7 @@ from .core import (
     resolve_vision_protocol,
 )
 from .runtime import run_with_retry
+from .logging_utils import log_event
 
 def optimize_prompt_with_image(
     prompt,
@@ -40,6 +41,7 @@ def optimize_prompt_with_image(
     user_initial_direction="",
     prepared_vision_image=None,
 ):
+    log_event("多模态", "开始评估图片", model=model_id, protocol=protocol_choice)
     if not api_key or not api_key.strip():
         raise ValueError("请填写视觉评估 API Key。")
 
@@ -208,6 +210,7 @@ def request_multimodal_text(
     on_retry=None,
     label="多模态请求",
 ):
+    log_event("多模态", "开始读取图片", model=model_id, protocol=protocol_choice, operation=label)
     if not api_key or not api_key.strip():
         raise ValueError("请填写多模态模型 API Key。")
     if not model_id or not model_id.strip():
@@ -610,6 +613,15 @@ def generate_random_prompt_job(
     used_scenes=None,
     summarize_scene=False,
 ):
+    log_event(
+        "文本任务",
+        "开始生成提示词",
+        job=job_index,
+        item=item_label,
+        model=model_id,
+        protocol=protocol,
+        summarize_scene=summarize_scene,
+    )
     events = []
     prompt = generate_random_prompt(
         base_url,
@@ -639,6 +651,7 @@ def generate_random_prompt_job(
                 f"第 {job_index} {item_label}场景概述触发重试 {attempt}/{retries}：{error}"
             ),
         )
+    log_event("文本任务", "提示词已生成", job=job_index, item=item_label, scene=scene or "未提取")
     return job_index, prompt, scene, events
 
 
