@@ -505,6 +505,13 @@ def build_gallery_items(saved_paths):
     return [(path, f"第 {index} 张") for index, path in enumerate(saved_paths, start=1)]
 
 
+def build_indexed_gallery_items(image_records, item_label="张"):
+    return [
+        (image_path, f"第 {job_index} {item_label}")
+        for job_index, image_path, _elapsed in sorted(image_records, key=lambda item: item[0])
+    ]
+
+
 def build_iterative_gallery_items(records, final_only=False):
     items = []
     for record in sorted(records, key=lambda item: (item["task_index"], item["round_index"])):

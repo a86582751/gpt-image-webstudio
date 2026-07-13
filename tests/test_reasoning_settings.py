@@ -6,7 +6,7 @@ import unittest
 import threading
 import time
 import types
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
@@ -255,6 +255,107 @@ class BatchConcurrencyTest(unittest.TestCase):
         launch_times.sort()
         gaps = [later - earlier for earlier, later in zip(launch_times, launch_times[1:])]
         self.assertTrue(all(gap >= 0.012 for gap in gaps), gaps)
+
+    def test_streamed_gallery_includes_current_completion_and_preserves_job_index(self):
+        second_future = Future()
+        second_future.set_result((2, "提示词二", "second.png", 2.0, []))
+        first_future = Future()
+        first_future.set_result((1, "提示词一", "first.png", 1.0, []))
+
+        def fake_runner(*_args, **_kwargs):
+            yield 2, second_future, False
+            yield 1, first_future, False
+
+        with patch.object(image_tasks, "run_bounded_concurrent_jobs", side_effect=fake_runner):
+            updates = list(
+                image_tasks.generate_images_concurrently(
+                    [(1, "提示词一"), (2, "提示词二")],
+                    ".",
+                    "1:1 正方形",
+                    "高清",
+                    "GPT Image",
+                    "https://example.com",
+                    "gpt-image-2",
+                    "high",
+                    "key",
+                    "https://seedream.example.com",
+                    "doubao-seedream-5-0-pro-260628",
+                    "seedream-key",
+                    "url",
+                    "自动",
+                    "关闭",
+                    2,
+                )
+            )
+
+        self.assertEqual(updates[1][0], [("second.png", "第 2 张")])
+        self.assertEqual(
+            updates[2][0],
+            [("first.png", "第 1 张"), ("second.png", "第 2 张")],
+        )
+        self.assertIn("刚完成第 2 张", updates[1][1])
+
+    def test_creative_gallery_uses_prompt_segment_labels(self):
+        gallery = core.build_indexed_gallery_items(
+            [(3, "third.png", 1.0), (1, "first.png", 1.0)],
+            item_label="段",
+        )
+        self.assertEqual(gallery, [("first.png", "第 1 段"), ("third.png", "第 3 段")])
+
+    def test_creative_stream_reports_and_displays_same_prompt_segment(self):
+        release_first = threading.Event()
+
+        def fake_prompt_job(index, *_args, **_kwargs):
+            return index, f"提示词{index}", "", []
+
+        def fake_image(prompt, *_args, **_kwargs):
+            index = int(prompt[-1])
+            if index == 1:
+                release_first.wait(timeout=1)
+                time.sleep(0.01)
+            else:
+                release_first.set()
+            return f"image-{index}.png"
+
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(
+            creative, "generate_random_prompt_job", side_effect=fake_prompt_job
+        ), patch.object(creative, "generate_one_image", side_effect=fake_image), patch.object(
+            creative, "persist_config"
+        ), patch.object(creative, "save_prompt_batch"):
+            updates = list(
+                creative.generate_creative_images(
+                    temp_dir,
+                    2,
+                    False,
+                    2,
+                    2,
+                    0,
+                    0,
+                    0,
+                    "GPT Image",
+                    "1:1 正方形",
+                    "高清",
+                    "https://image.example.com",
+                    "gpt-image-2",
+                    "high",
+                    "image-key",
+                    "https://seedream.example.com",
+                    "doubao-seedream-5-0-pro-260628",
+                    "seedream-key",
+                    "url",
+                    "自动",
+                    "关闭",
+                    "https://text.example.com",
+                    "text-model",
+                    "text-key",
+                    "自动识别",
+                    "关闭",
+                    "测试方向",
+                )
+            )
+
+        second_completion = next(update for update in updates if "刚完成第 2 段对应图片" in update[2])
+        self.assertEqual(second_completion[1], [("image-2.png", "第 2 段")])
 
 
 class RefactorSmokeTest(unittest.TestCase):

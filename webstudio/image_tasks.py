@@ -7,7 +7,7 @@ import requests
 
 from .config import IMAGE_READ_TIMEOUT, INPUT_FIDELITY_PRESETS, should_stop
 from .core import (
-    build_gallery_items,
+    build_indexed_gallery_items,
     build_seedream_prompt,
     display_endpoint,
     format_bytes,
@@ -391,7 +391,7 @@ def generate_images_concurrently(
         return
 
     yield (
-        build_gallery_items(saved_paths),
+        build_indexed_gallery_items(image_records),
         f"开始生成 {total_count} 张；图片模型 {image_model_provider}；最大并发 {concurrency}；生图并发间隔 {image_request_delay:g} 秒；请求尺寸 {request_size}；品质 {quality}",
     )
 
@@ -437,7 +437,7 @@ def generate_images_concurrently(
         ):
             if stopped:
                 yield (
-                    build_gallery_items(saved_paths),
+                    build_indexed_gallery_items(image_records),
                     f"已停止：保存 {len(saved_paths)}/{total_count} 张。",
                 )
                 return
@@ -448,26 +448,26 @@ def generate_images_concurrently(
                 dimensions = get_image_dimensions(image_path) or request_size
                 status_extra = f"\n{events[-1]}" if events else ""
                 yield (
-                    build_gallery_items(saved_paths),
+                    build_indexed_gallery_items(image_records),
                     f"已完成 {len(saved_paths)}/{total_count} 张；刚完成第 {job_index} 张，分辨率 {dimensions}，耗时 {format_duration(elapsed)}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}{status_extra}",
                 )
             except Exception as e:
                 failed_jobs.append((job_index, str(e)))
                 yield (
-                    build_gallery_items(saved_paths),
+                    build_indexed_gallery_items(image_records),
                     f"第 {job_index} 张失败并已跳过：{e}；已保存 {len(saved_paths)}/{total_count} 张，失败 {len(failed_jobs)} 张。",
                 )
     except Exception as e:
         failed_count = len(failed_jobs) or total_count - len(saved_paths)
         yield (
-            build_gallery_items(saved_paths),
+            build_indexed_gallery_items(image_records),
             f"生成中断：{e}；已保存 {len(saved_paths)}/{total_count} 张，失败 {failed_count} 张；{format_generation_stats(image_records, total_count, time.perf_counter() - total_started_at, request_size)}。",
         )
         return
 
     failed_summary = f"；失败 {len(failed_jobs)} 张" if failed_jobs else ""
     yield (
-        build_gallery_items(saved_paths),
+        build_indexed_gallery_items(image_records),
         f"生成完成：图片模型 {image_model_provider}；共保存 {len(saved_paths)} 张{failed_summary}；{format_generation_stats(image_records, total_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}{format_failed_jobs_summary(failed_jobs)}",
     )
 
@@ -541,11 +541,11 @@ def generate_image_edits_concurrently(
             for path in input_images
         ]
     except Exception as e:
-        yield build_gallery_items(saved_paths), f"参考图读取或压缩失败：{e}"
+        yield build_indexed_gallery_items(image_records), f"参考图读取或压缩失败：{e}"
         return
 
     yield (
-        build_gallery_items(saved_paths),
+        build_indexed_gallery_items(image_records),
         f"开始图片编辑 {image_count} 张；图片模型 {image_model_provider}；最大并发 {concurrency}；生图并发间隔 {image_request_delay:g} 秒；请求尺寸 {request_size}；品质 {quality}；输入保真度 {input_fidelity}；{format_edit_input_summary(prepared_preview)}",
     )
 
@@ -591,7 +591,7 @@ def generate_image_edits_concurrently(
             "edit",
         ):
             if stopped:
-                yield build_gallery_items(saved_paths), f"已停止：已保存 {len(saved_paths)}/{image_count} 张。"
+                yield build_indexed_gallery_items(image_records), f"已停止：已保存 {len(saved_paths)}/{image_count} 张。"
                 return
             try:
                 index, image_path, elapsed, events, prepared_images = future.result()
@@ -600,22 +600,22 @@ def generate_image_edits_concurrently(
                 dimensions = get_image_dimensions(image_path) or request_size
                 status_extra = f"\n{events[-1]}" if events else ""
                 yield (
-                    build_gallery_items(saved_paths),
+                    build_indexed_gallery_items(image_records),
                     f"已完成 {len(saved_paths)}/{image_count} 张；刚完成第 {index} 张，分辨率 {dimensions}，耗时 {format_duration(elapsed)}；{format_edit_input_summary(prepared_images)}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}{status_extra}",
                 )
             except Exception as e:
                 failed_jobs.append((job_index, str(e)))
                 yield (
-                    build_gallery_items(saved_paths),
+                    build_indexed_gallery_items(image_records),
                     f"第 {job_index} 张图片编辑失败并已跳过：{e}；已保存 {len(saved_paths)}/{image_count} 张，失败 {len(failed_jobs)} 张。",
                 )
 
     except Exception as e:
-        yield build_gallery_items(saved_paths), f"图片编辑调度中断：{e}；已保存 {len(saved_paths)}/{image_count} 张。"
+        yield build_indexed_gallery_items(image_records), f"图片编辑调度中断：{e}；已保存 {len(saved_paths)}/{image_count} 张。"
         return
 
     yield (
-        build_gallery_items(saved_paths),
+        build_indexed_gallery_items(image_records),
         f"图片编辑完成：图片模型 {image_model_provider}；共保存 {len(saved_paths)} 张；失败 {len(failed_jobs)} 张；{format_generation_stats(image_records, image_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；输入保真度 {input_fidelity}；目录 {save_dir}{format_failed_jobs_summary(failed_jobs)}",
     )
 

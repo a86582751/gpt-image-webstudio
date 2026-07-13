@@ -4,7 +4,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 
 from ..config import normalize_seedream_model_id, persist_config, reset_stop_flag, should_stop
 from ..core import (
-    build_gallery_items,
+    build_indexed_gallery_items,
     format_failed_jobs_summary,
     format_generation_stats,
     get_image_dimensions,
@@ -220,7 +220,7 @@ def generate_creative_images(
                     scene_status = f"；已经用过场景：{format_used_scenes(used_scenes) or '暂无'}" if creative_random_enhance else ""
                     yield (
                         prompt_text,
-                        build_gallery_items(saved_paths),
+                        build_indexed_gallery_items(image_records, item_label="段"),
                         f"已停止：已生成提示词 {len(prompts)}/{creative_count} 段，已保存图片 {len(saved_paths)}/{creative_count} 张{scene_status}。",
                     )
                     return
@@ -242,14 +242,14 @@ def generate_creative_images(
                             scene_status = f"；已经用过场景：{format_used_scenes(used_scenes) or '暂无'}" if creative_random_enhance else ""
                             yield (
                                 prompt_text,
-                                build_gallery_items(saved_paths),
+                                build_indexed_gallery_items(image_records, item_label="段"),
                                 f"已生成 {len(prompts)}/{creative_count} 段提示词；已启动第 {index} 张生图；已完成 {len(saved_paths)}/{creative_count} 张{scene_status}。{status_extra}",
                             )
                         except Exception as e:
                             failed_prompts.append((index, str(e)))
                             yield (
                                 prompt_text,
-                                build_gallery_items(saved_paths),
+                                build_indexed_gallery_items(image_records, item_label="段"),
                                 f"提示词失败 {len(failed_prompts)} 段；跳过第 {index} 段提示词：{e}；已完成图片 {len(saved_paths)}/{creative_count} 张。",
                             )
 
@@ -275,15 +275,15 @@ def generate_creative_images(
                             scene_status = f"；已经用过场景：{format_used_scenes(used_scenes) or '暂无'}" if creative_random_enhance else ""
                             yield (
                                 prompt_text,
-                                build_gallery_items(saved_paths),
-                                f"已完成 {len(saved_paths)}/{creative_count} 张；刚完成第 {index} 张，分辨率 {dimensions}，耗时 {format_duration(elapsed)}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}{scene_status}{status_extra}",
+                                build_indexed_gallery_items(image_records, item_label="段"),
+                                f"已完成 {len(saved_paths)}/{creative_count} 张；刚完成第 {index} 段对应图片，分辨率 {dimensions}，耗时 {format_duration(elapsed)}；累计耗时 {format_duration(time.perf_counter() - total_started_at)}{scene_status}{status_extra}",
                             )
                         except Exception as e:
                             failed_images.append((index, str(e)))
                             yield (
                                 prompt_text,
-                                build_gallery_items(saved_paths),
-                                f"第 {index} 张图片失败并已跳过：{e}；已保存 {len(saved_paths)}/{creative_count} 张，失败 {len(failed_images)} 张。",
+                                build_indexed_gallery_items(image_records, item_label="段"),
+                                f"第 {index} 段对应图片失败并已跳过：{e}；已保存 {len(saved_paths)}/{creative_count} 张，失败 {len(failed_images)} 张。",
                             )
 
             if prompts:
@@ -294,7 +294,7 @@ def generate_creative_images(
         prompt_text = "\n\n".join(f"第 {i} 段提示词：\n{text}" for i, text in sorted(prompts))
         yield (
             prompt_text,
-            build_gallery_items(saved_paths),
+            build_indexed_gallery_items(image_records, item_label="段"),
             f"创意模式调度中断：{e}；已生成提示词 {len(prompts)}/{creative_count} 段，已保存图片 {len(saved_paths)}/{creative_count} 张。",
         )
         return
@@ -318,6 +318,6 @@ def generate_creative_images(
     )
     yield (
         prompt_text,
-        build_gallery_items(saved_paths),
+        build_indexed_gallery_items(image_records, item_label="段"),
         f"创意模式完成：图片模型 {image_model_provider}；共生成 {len(prompts)} 段提示词，保存 {len(saved_paths)} 张图片，提示词失败 {len(failed_prompts)} 段，图片失败 {len(failed_images)} 张；{format_generation_stats(image_records, creative_count, time.perf_counter() - total_started_at, request_size)}；品质 {quality}；目录 {save_dir}{prompt_failure_summary}{image_failure_summary}",
     )
